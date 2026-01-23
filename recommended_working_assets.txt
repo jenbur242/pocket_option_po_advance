@@ -1,0 +1,72 @@
+# Recommended Working Assets for PocketOption Trading
+# Tested: 2026-01-14 23:54:57
+# Success Rate: 63/78 (80.8%)
+
+# Major Pairs (Regular Format)
+AUDCAD
+AUDCHF
+AUDJPY
+AUDUSD
+CADCHF
+CADJPY
+CHFJPY
+EURAUD
+EURCAD
+EURCHF
+EURGBP
+EURJPY
+EURUSD
+GBPAUD
+GBPCAD
+USDCAD
+USDCHF
+USDJPY
+
+# Cross Pairs (Regular Format)
+
+# OTC Pairs
+AEDCNY_otc
+AUDCAD_otc
+AUDCHF_otc
+AUDJPY_otc
+AUDNZD_otc
+AUDUSD_otc
+BHDCNY_otc
+CADCHF_otc
+CADJPY_otc
+CHFJPY_otc
+CHFNOK_otc
+EURCHF_otc
+EURGBP_otc
+EURHUF_otc
+EURJPY_otc
+EURNZD_otc
+EURTRY_otc
+EURUSD_otc
+GBPAUD_otc
+GBPJPY_otc
+MADUSD_otc
+NGNUSD_otc
+NZDJPY_otc
+NZDUSD_otc
+OMRCNY_otc
+QARCNY_otc
+SARCNY_otc
+TNDUSD_otc
+UAHUSD_otc
+USDARS_otc
+USDBDT_otc
+USDBRL_otc
+USDCAD_otc
+USDCHF_otc
+USDCLP_otc
+USDCNH_otc
+USDDZD_otc
+USDEGP_otc
+USDIDR_otc
+USDINR_otc
+USDPKR_otc
+USDRUB_otc
+USDSGD_otc
+USDTHB_otc
+ZARUSD_otc

@@ -1,0 +1,154 @@
+Category,Asset Name,Asset ID,Notes
+
+=== Forex - Major Pairs (7 assets) ===,,,
+Forex - Major Pairs,AUDUSD,40,
+Forex - Major Pairs,EURUSD,1,
+Forex - Major Pairs,GBPUSD,56,
+Forex - Major Pairs,NZDUSD,90,
+Forex - Major Pairs,USDCAD,61,
+Forex - Major Pairs,USDCHF,62,
+Forex - Major Pairs,USDJPY,63,
+
+=== Forex - OTC Pairs (50 assets) ===,,,
+Forex - OTC Pairs,AEDCNY_otc,600,OTC trading hours
+Forex - OTC Pairs,AUDCAD_otc,67,OTC trading hours
+Forex - OTC Pairs,AUDCHF_otc,68,OTC trading hours
+Forex - OTC Pairs,AUDJPY_otc,69,OTC trading hours
+Forex - OTC Pairs,AUDNZD_otc,70,OTC trading hours
+Forex - OTC Pairs,AUDUSD_otc,71,OTC trading hours
+Forex - OTC Pairs,American_Express_otc,525,OTC trading hours
+Forex - OTC Pairs,BHDCNY_otc,601,OTC trading hours
+Forex - OTC Pairs,BRLUSD_otc,634,OTC trading hours
+Forex - OTC Pairs,Boeing_OTC,524,OTC trading hours
+Forex - OTC Pairs,CADCHF_otc,72,OTC trading hours
+Forex - OTC Pairs,CADJPY_otc,73,OTC trading hours
+Forex - OTC Pairs,CHFJPY_otc,74,OTC trading hours
+Forex - OTC Pairs,CHFNOK_otc,457,OTC trading hours
+Forex - OTC Pairs,CLPUSD_otc,631,OTC trading hours
+Forex - OTC Pairs,CNYQAR_otc,622,OTC trading hours
+Forex - OTC Pairs,EGPUSD_otc,612,OTC trading hours
+Forex - OTC Pairs,EURCHF_otc,77,OTC trading hours
+Forex - OTC Pairs,EURGBP_otc,78,OTC trading hours
+Forex - OTC Pairs,EURHUF_otc,460,OTC trading hours
+Forex - OTC Pairs,EURJPY_otc,79,OTC trading hours
+Forex - OTC Pairs,EURNZD_otc,80,OTC trading hours
+Forex - OTC Pairs,EURRUB_otc,200,OTC trading hours
+Forex - OTC Pairs,EURUSD_otc,66,OTC trading hours
+Forex - OTC Pairs,Facebook_OTC,522,OTC trading hours
+Forex - OTC Pairs,GBPAUD_otc,81,OTC trading hours
+Forex - OTC Pairs,GBPJPY_otc,84,OTC trading hours
+Forex - OTC Pairs,GBPUSD_otc,86,OTC trading hours
+Forex - OTC Pairs,Microsoft_otc,521,OTC trading hours
+Forex - OTC Pairs,NGNUSD_otc,610,OTC trading hours
+Forex - OTC Pairs,NZDCAD_otc,640,OTC trading hours
+Forex - OTC Pairs,NZDJPY_otc,89,OTC trading hours
+Forex - OTC Pairs,NZDUSD_otc,90,OTC trading hours
+Forex - OTC Pairs,OMRCNY_otc,602,OTC trading hours
+Forex - OTC Pairs,QARCNY_otc,603,OTC trading hours
+Forex - OTC Pairs,QARJPY_otc,605,OTC trading hours
+Forex - OTC Pairs,QARUSD_otc,604,OTC trading hours
+Forex - OTC Pairs,Tesla_otc,523,OTC trading hours
+Forex - OTC Pairs,UKBrent_otc,164,OTC trading hours
+Forex - OTC Pairs,USCrude_otc,165,OTC trading hours
+Forex - OTC Pairs,USDBDT_otc,621,OTC trading hours
+Forex - OTC Pairs,USDBRL_otc,633,OTC trading hours
+Forex - OTC Pairs,USDCAD_otc,91,OTC trading hours
+Forex - OTC Pairs,USDCHF_otc,92,OTC trading hours
+Forex - OTC Pairs,USDCLP_otc,630,OTC trading hours
+Forex - OTC Pairs,USDCOP_otc,632,OTC trading hours
+Forex - OTC Pairs,USDEGP_otc,611,OTC trading hours
+Forex - OTC Pairs,USDJPY_otc,93,OTC trading hours
+Forex - OTC Pairs,USDPKR_otc,620,OTC trading hours
+Forex - OTC Pairs,USDRUB_otc,199,OTC trading hours
+
+=== Commodities (10 assets) ===,,,
+Commodities,XAGUSD,65,
+Commodities,XAGUSD_otc,167,OTC trading hours
+Commodities,XAUUSD,2,
+Commodities,XAUUSD_otc,169,OTC trading hours
+Commodities,XNGUSD,311,
+Commodities,XNGUSD_otc,399,OTC trading hours
+Commodities,XPDUSD,313,
+Commodities,XPDUSD_otc,401,OTC trading hours
+Commodities,XPTUSD,312,
+Commodities,XPTUSD_otc,400,OTC trading hours
+
+=== Cryptocurrencies (10 assets) ===,,,
+Cryptocurrencies,BCHEUR,450,
+Cryptocurrencies,BCHGBP,451,
+Cryptocurrencies,BCHJPY,452,
+Cryptocurrencies,BTCGBP,453,
+Cryptocurrencies,BTCJPY,454,
+Cryptocurrencies,BTCUSD,197,
+Cryptocurrencies,DASH_USD,209,
+Cryptocurrencies,DOTUSD,458,
+Cryptocurrencies,ETHUSD,272,
+Cryptocurrencies,LNKUSD,464,
+
+=== Stocks (36 assets) ===,,,
+Stocks,#AAPL,5,Stock
+Stocks,#AAPL_otc,170,"OTC trading hours, Stock"
+Stocks,#AMZN_otc,412,"OTC trading hours, Stock"
+Stocks,#AXP,140,Stock
+Stocks,#AXP_otc,291,"OTC trading hours, Stock"
+Stocks,#BA,8,Stock
+Stocks,#BABA,183,Stock
+Stocks,#BABA_otc,428,"OTC trading hours, Stock"
+Stocks,#BA_otc,292,"OTC trading hours, Stock"
+Stocks,#CITI,326,Stock
+Stocks,#CITI_otc,413,"OTC trading hours, Stock"
+Stocks,#CSCO,154,Stock
+Stocks,#CSCO_otc,427,"OTC trading hours, Stock"
+Stocks,#FB,177,Stock
+Stocks,#FB_otc,187,"OTC trading hours, Stock"
+Stocks,#FDX_otc,414,"OTC trading hours, Stock"
+Stocks,#INTC,180,Stock
+Stocks,#INTC_otc,190,"OTC trading hours, Stock"
+Stocks,#JNJ,144,Stock
+Stocks,#JNJ_otc,296,"OTC trading hours, Stock"
+Stocks,#JPM,20,Stock
+Stocks,#MCD,23,Stock
+Stocks,#MCD_otc,175,"OTC trading hours, Stock"
+Stocks,#MSFT,24,Stock
+Stocks,#MSFT_otc,176,"OTC trading hours, Stock"
+Stocks,#NFLX,182,Stock
+Stocks,#NFLX_otc,429,"OTC trading hours, Stock"
+Stocks,#PFE,147,Stock
+Stocks,#PFE_otc,297,"OTC trading hours, Stock"
+Stocks,#TSLA,186,Stock
+Stocks,#TSLA_otc,196,"OTC trading hours, Stock"
+Stocks,#TWITTER,330,Stock
+Stocks,#TWITTER_otc,415,"OTC trading hours, Stock"
+Stocks,#VISA_otc,416,"OTC trading hours, Stock"
+Stocks,#XOM,153,Stock
+Stocks,#XOM_otc,426,"OTC trading hours, Stock"
+
+=== Indices (24 assets) ===,,,
+Indices,100GBP,315,
+Indices,100GBP_otc,403,OTC trading hours
+Indices,AEX25,449,
+Indices,AUS200,305,
+Indices,AUS200_otc,306,OTC trading hours
+Indices,CAC40,455,
+Indices,D30EUR,318,
+Indices,D30EUR_otc,406,OTC trading hours
+Indices,DJI30,322,
+Indices,DJI30_otc,409,OTC trading hours
+Indices,E35EUR,314,
+Indices,E35EUR_otc,402,OTC trading hours
+Indices,E50EUR,319,
+Indices,E50EUR_otc,407,OTC trading hours
+Indices,F40EUR,316,
+Indices,F40EUR_otc,404,OTC trading hours
+Indices,H33HKD,463,
+Indices,JPN225,317,
+Indices,JPN225_otc,405,OTC trading hours
+Indices,NASUSD,323,
+Indices,NASUSD_otc,410,OTC trading hours
+Indices,SMI20,466,
+Indices,SP500,321,
+Indices,SP500_otc,408,OTC trading hours
+
+=== Other (2 assets) ===,,,
+Other,UKBrent,50,
+Other,USCrude,64,
