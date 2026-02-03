@@ -1632,7 +1632,6 @@ class MultiAssetPreciseTrader:
         
         self.trade_history = []
         self.pending_immediate_trades = []  # Queue for immediate next step trades
-        self.executed_signals = set()  # Track executed signal combinations to prevent duplicates
         
         # API health tracking
         self.api_failures = 0
@@ -1992,17 +1991,8 @@ class MultiAssetPreciseTrader:
             # Sort by trade execution time
             signals.sort(key=lambda x: x['trade_datetime'])
             
-            # Remove duplicate signals (same asset+direction+time) to prevent multiple executions
-            unique_signals = []
-            seen_combinations = set()
-            for signal in signals:
-                signal_key = f"{signal['asset']}_{signal['direction']}_{signal['signal_datetime'].strftime('%H:%M:%S')}"
-                if signal_key not in seen_combinations:
-                    unique_signals.append(signal)
-                    seen_combinations.add(signal_key)
-            
-            # Return unique signals only
-            return unique_signals
+            # Return signals (verbose output removed for cleaner display)
+            return signals
             
         except Exception as e:
             logger.error(f"Error reading CSV: {e}")

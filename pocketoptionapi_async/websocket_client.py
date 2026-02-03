@@ -713,6 +713,9 @@ class AsyncWebSocketClient:
         elif event_type == "updateHistoryNew":
             await self._emit_event("history_update", event_data)
 
+        elif event_type == "serverTime" or event_type == "getServerTime":
+            await self._emit_event("server_time", event_data)
+
         else:
             await self._emit_event(
                 "unknown_event", {"type": event_type, "data": event_data}

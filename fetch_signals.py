@@ -4,13 +4,6 @@ PocketOption Precise Timing Trader
 Places trades with configurable offset from signal time
 Trade timing is controlled by trade_config.txt file
 Example: Signal at 00:38:00, offset=3s → Execute at 00:37:57
-
-NEW FEATURES:
-- Date-specific trading: Run continuously for signals on any specific date
-- Enhanced CSV file handling: Supports both current date and date matching
-- Flexible channel support: Works with all 5 channels (James Martin, LC Trader, PO ADVANCE BOT, Logic 5 Cycle, Pocket Option Sign)
-- Current date focus: Prioritizes today's signals but supports historical/future date trading
-- Regular channel runs: Automatically updates CSV files and runs channel code regularly
 """
 import os
 import json
@@ -57,25 +50,6 @@ def format_time_hmsms(dt: datetime) -> str:
 def get_user_time_str() -> str:
     """Get current user timezone time as formatted string h:m:s:ms"""
     return format_time_hmsms(get_user_time())
-
-def format_time_remaining(current_time: datetime, signal_time: datetime) -> str:
-    """Format time remaining until signal execution"""
-    time_diff = signal_time - current_time
-    total_seconds = int(time_diff.total_seconds())
-    
-    if total_seconds <= 0:
-        return "NOW"
-    
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-    
-    if hours > 0:
-        return f"{hours}h {minutes}m {seconds}s"
-    elif minutes > 0:
-        return f"{minutes}m {seconds}s"
-    else:
-        return f"{seconds}s"
 
 def get_timezone_name() -> str:
     """Get timezone name for display"""
@@ -227,444 +201,6 @@ class MultiAssetMartingaleStrategy:
                 assets_at_step1.append(asset)
         return assets_at_step1
 
-class TwoCycleTwoStepMartingaleStrategy:
-    """2-Cycle 2-Step Martingale: Cycle progression across different assets"""
-    
-    def __init__(self, base_amount: float, multiplier: float = 2.5):
-        self.base_amount = base_amount
-        self.multiplier = multiplier
-        self.max_cycles = 2
-        self.max_steps_per_cycle = 2
-        
-        # Global cycle state - applies to ALL assets
-        self.global_cycle = 1
-        self.global_step = 1
-        
-        # Track each asset separately with cycle and step info
-        self.asset_strategies = {}  # {asset: {'cycle': 1, 'step': 1, 'amounts': []}}
-        
-        # Calculate all amounts for display
-        c1s1 = base_amount                                    # $1.00
-        c1s2 = base_amount * multiplier                       # $2.50
-        c2s1 = base_amount * (multiplier ** 2)               # $6.25
-        c2s2 = base_amount * (multiplier ** 3)               # $15.625
-        
-        print(f"🎯 2-Cycle 2-Step Martingale Strategy (Cross-Asset Progression)")
-        print(f"   Base Amount: ${base_amount}")
-        print(f"   Multiplier: {multiplier}")
-        print(f"   Max Cycles: {self.max_cycles}")
-        print(f"   Steps per Cycle: {self.max_steps_per_cycle}")
-        print(f"   Cycle Amounts:")
-        print(f"     Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f}")
-        print(f"     Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f}")
-        print(f"   Strategy: Cycle progression across different assets")
-        print(f"   Logic: LOSS at Step 2 → Next asset starts at next cycle")
-    
-    def get_asset_step(self, asset: str) -> int:
-        """Get current step for specific asset - uses global cycle state for new assets"""
-        if asset not in self.asset_strategies:
-            # New asset starts at current global cycle and step
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        return self.asset_strategies[asset]['step']
-    
-    def get_asset_cycle(self, asset: str) -> int:
-        """Get current cycle for specific asset - uses global cycle state for new assets"""
-        if asset not in self.asset_strategies:
-            # New asset starts at current global cycle and step
-            print(f"🔍 DEBUG: New asset {asset} starting at global C{self.global_cycle}S{self.global_step}")
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        else:
-            print(f"🔍 DEBUG: Existing asset {asset} at C{self.asset_strategies[asset]['cycle']}S{self.asset_strategies[asset]['step']} (global: C{self.global_cycle}S{self.global_step})")
-        return self.asset_strategies[asset]['cycle']
-    
-    def get_current_amount(self, asset: str) -> float:
-        """Get current trade amount for specific asset based on cycle and step"""
-        if asset not in self.asset_strategies:
-            # New asset starts at current global cycle and step
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        
-        strategy = self.asset_strategies[asset]
-        cycle = strategy['cycle']
-        step = strategy['step']
-        
-        # Calculate amount based on cycle and step
-        if cycle == 1:
-            if step == 1:
-                return self.base_amount  # C1S1: $1.00
-            else:  # step == 2
-                return self.base_amount * self.multiplier  # C1S2: $1.00 × 2.5 = $2.50
-        elif cycle == 2:
-            # C2S1 = C1S2 × multiplier = $2.50 × 2.5 = $6.25
-            # C2S2 = C2S1 × multiplier = $6.25 × 2.5 = $15.625
-            if step == 1:
-                return self.base_amount * (self.multiplier ** 2)  # C2S1: $1 × 2.5² = $6.25
-            else:  # step == 2
-                return self.base_amount * (self.multiplier ** 3)  # C2S2: $1 × 2.5³ = $15.625
-        else:
-            return self.base_amount
-    
-    def record_result(self, won: bool, asset: str, trade_amount: float) -> Dict[str, Any]:
-        """Record trade result and return next action with cross-asset cycle progression"""
-        if asset not in self.asset_strategies:
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        
-        strategy = self.asset_strategies[asset]
-        cycle = strategy['cycle']
-        step = strategy['step']
-        
-        # Record amount used
-        strategy['amounts'].append(trade_amount)
-        
-        if won:
-            print(f"✅ {asset} WIN at C{cycle}S{step}! Resetting global state to C1S1")
-            print(f"🔍 DEBUG: Before reset - Global: C{self.global_cycle}S{self.global_step}")
-            # WIN resets GLOBAL state to C1S1 - all future assets start at C1S1
-            self.global_cycle = 1
-            self.global_step = 1
-            print(f"🔍 DEBUG: After reset - Global: C{self.global_cycle}S{self.global_step}")
-            # Reset this asset's strategy
-            strategy['cycle'] = 1
-            strategy['step'] = 1
-            strategy['amounts'] = []
-            return {'action': 'reset', 'asset': asset, 'next_cycle': 1, 'next_step': 1}
-        else:
-            print(f"❌ {asset} LOSS at C{cycle}S{step}!")
-            
-            if step < self.max_steps_per_cycle:
-                # Move to next step in same cycle (same asset)
-                strategy['step'] += 1
-                print(f"🔄 Moving to C{cycle}S{strategy['step']} for {asset}")
-                return {'action': 'continue', 'asset': asset, 'next_cycle': cycle, 'next_step': strategy['step']}
-            else:
-                # Step 2 of current cycle lost - advance GLOBAL cycle for NEXT assets
-                if cycle < self.max_cycles:
-                    # Advance global cycle for next assets
-                    self.global_cycle = cycle + 1
-                    self.global_step = 1
-                    print(f"🔄 {asset} C{cycle}S2 LOST! Next assets will start at C{self.global_cycle}S1")
-                    
-                    # Mark this asset as completed (no more trades for this asset)
-                    strategy['cycle'] = cycle + 1  # For status display
-                    strategy['step'] = 1
-                    strategy['amounts'] = []
-                    return {'action': 'asset_completed', 'asset': asset, 'next_cycle': self.global_cycle, 'next_step': 1}
-                else:
-                    # All 2 cycles completed - reset global state to C1S1
-                    print(f"🔄 {asset} C2S2 LOST! All cycles completed - resetting global state to C1S1")
-                    self.global_cycle = 1
-                    self.global_step = 1
-                    
-                    # Reset this asset's strategy
-                    strategy['cycle'] = 1
-                    strategy['step'] = 1
-                    strategy['amounts'] = []
-                    return {'action': 'reset_after_max_loss', 'asset': asset, 'next_cycle': 1, 'next_step': 1}
-    
-    def get_status(self, asset: str) -> str:
-        """Get current strategy status for specific asset"""
-        if asset not in self.asset_strategies:
-            return f"{asset}: C{self.global_cycle}S{self.global_step} (${self.get_current_amount(asset):.2f}) [NEW]"
-        
-        strategy = self.asset_strategies[asset]
-        cycle = strategy['cycle']
-        step = strategy['step']
-        current_amount = self.get_current_amount(asset)
-        return f"{asset}: C{cycle}S{step} (${current_amount:.2f})"
-    
-    def get_all_active_assets(self) -> List[str]:
-        """Get all assets currently being tracked"""
-        return list(self.asset_strategies.keys())
-    
-    def should_prioritize_existing_sequences(self) -> bool:
-        """Check if any asset is in the middle of a cycle sequence"""
-        for asset, strategy in self.asset_strategies.items():
-            if strategy['cycle'] > 1 or strategy['step'] > 1:
-                return True
-        return False
-    
-    def show_global_status(self):
-        """Show global cycle state"""
-        print(f"🌍 Global Cycle State: C{self.global_cycle}S{self.global_step} (new assets start here)")
-    
-    def show_strategy_status(self):
-        """Show current status of all assets and global cycle state"""
-        print("📊 Current Strategy Status:")
-        print(f"   🌍 Global Cycle State: C{self.global_cycle}S{self.global_step} (new assets start here)")
-        
-        if not self.asset_strategies:
-            print("   📊 No active assets")
-            return
-            
-        print("   📊 Asset Status:")
-        for asset, strategy in self.asset_strategies.items():
-            cycle = strategy['cycle']
-            step = strategy['step']
-            current_amount = self.get_current_amount(asset)
-            
-            if cycle == 1 and step == 1:
-                status = "✅ Ready for new signal"
-            else:
-                status = f"🔄 In cycle sequence"
-                
-            print(f"      {asset}: C{cycle}S{step} (${current_amount:.2f}) - {status}")
-    
-    def get_assets_in_sequence(self) -> List[str]:
-        """Get assets that are currently in cycle sequence"""
-        assets_in_sequence = []
-        for asset, strategy in self.asset_strategies.items():
-            if strategy['cycle'] > 1 or strategy['step'] > 1:
-                assets_in_sequence.append(asset)
-        return assets_in_sequence
-    
-    def get_assets_at_step1(self) -> List[str]:
-        """Get assets that are at C1S1 (ready for new signals)"""
-        assets_at_step1 = []
-        for asset, strategy in self.asset_strategies.items():
-            if strategy['cycle'] == 1 and strategy['step'] == 1:
-                assets_at_step1.append(asset)
-        return assets_at_step1
-
-class TwoCycleThreeStepMartingaleStrategy:
-    """2-Cycle 3-Step Martingale: 2 cycles with 3 steps, step 4 initial amount is sum of first 3 steps"""
-    
-    def __init__(self, base_amount: float, multiplier: float = 2.5):
-        self.base_amount = base_amount
-        self.multiplier = multiplier
-        self.max_cycles = 2
-        self.max_steps_per_cycle = 3
-        
-        # Global cycle state - applies to ALL assets
-        self.global_cycle = 1
-        self.global_step = 1
-        
-        # Track each asset separately with cycle and step info
-        self.asset_strategies = {}  # {asset: {'cycle': 1, 'step': 1, 'amounts': []}}
-        
-        # Calculate all amounts for display
-        c1s1 = base_amount                                    # $1.00
-        c1s2 = base_amount * multiplier                       # $2.50
-        c1s3 = base_amount * (multiplier ** 2)               # $6.25
-        # Step 4 (C2S1) = sum of first 3 steps
-        c2s1 = c1s1 + c1s2 + c1s3                           # $1.00 + $2.50 + $6.25 = $9.75
-        c2s2 = c2s1 * multiplier                            # $9.75 × 2.5 = $24.375
-        c2s3 = c2s2 * multiplier                            # $24.375 × 2.5 = $60.9375
-        
-        print(f"🎯 2-Cycle 3-Step Martingale Strategy (Cross-Asset Progression)")
-        print(f"   Base Amount: ${base_amount}")
-        print(f"   Multiplier: {multiplier}")
-        print(f"   Max Cycles: {self.max_cycles}")
-        print(f"   Steps per Cycle: {self.max_steps_per_cycle}")
-        print(f"   Cycle Amounts:")
-        print(f"     Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f} → Step 3 ${c1s3:.2f}")
-        print(f"     Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f} → Step 3 ${c2s3:.2f}")
-        print(f"   Special Logic: Step 4 (C2S1) = Sum of first 3 steps (${c2s1:.2f})")
-        print(f"   Strategy: Cycle progression across different assets")
-        print(f"   Logic: LOSS at Step 3 → Next asset starts at next cycle")
-    
-    def get_asset_step(self, asset: str) -> int:
-        """Get current step for specific asset - uses global cycle state for new assets"""
-        if asset not in self.asset_strategies:
-            # New asset starts at current global cycle and step
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        return self.asset_strategies[asset]['step']
-    
-    def get_asset_cycle(self, asset: str) -> int:
-        """Get current cycle for specific asset - uses global cycle state for new assets"""
-        if asset not in self.asset_strategies:
-            # New asset starts at current global cycle and step
-            print(f"🔍 DEBUG: New asset {asset} starting at global C{self.global_cycle}S{self.global_step}")
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        else:
-            print(f"🔍 DEBUG: Existing asset {asset} at C{self.asset_strategies[asset]['cycle']}S{self.asset_strategies[asset]['step']} (global: C{self.global_cycle}S{self.global_step})")
-        return self.asset_strategies[asset]['cycle']
-    
-    def get_current_amount(self, asset: str) -> float:
-        """Get current trade amount for specific asset based on cycle and step"""
-        if asset not in self.asset_strategies:
-            # New asset starts at current global cycle and step
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        
-        strategy = self.asset_strategies[asset]
-        cycle = strategy['cycle']
-        step = strategy['step']
-        
-        # Calculate amount based on cycle and step
-        if cycle == 1:
-            if step == 1:
-                return self.base_amount  # C1S1: $1.00
-            elif step == 2:
-                return self.base_amount * self.multiplier  # C1S2: $1.00 × 2.5 = $2.50
-            else:  # step == 3
-                return self.base_amount * (self.multiplier ** 2)  # C1S3: $1.00 × 2.5² = $6.25
-        elif cycle == 2:
-            # Special logic: C2S1 = sum of first 3 steps
-            c1s1 = self.base_amount
-            c1s2 = self.base_amount * self.multiplier
-            c1s3 = self.base_amount * (self.multiplier ** 2)
-            c2s1 = c1s1 + c1s2 + c1s3  # Sum of first 3 steps
-            
-            if step == 1:
-                return c2s1  # C2S1: sum of first 3 steps
-            elif step == 2:
-                return c2s1 * self.multiplier  # C2S2: C2S1 × multiplier
-            else:  # step == 3
-                return c2s1 * (self.multiplier ** 2)  # C2S3: C2S1 × multiplier²
-        else:
-            return self.base_amount
-    
-    def record_result(self, won: bool, asset: str, trade_amount: float) -> Dict[str, Any]:
-        """Record trade result and return next action with cross-asset cycle progression"""
-        if asset not in self.asset_strategies:
-            self.asset_strategies[asset] = {
-                'cycle': self.global_cycle, 
-                'step': self.global_step, 
-                'amounts': []
-            }
-        
-        strategy = self.asset_strategies[asset]
-        cycle = strategy['cycle']
-        step = strategy['step']
-        
-        # Record amount used
-        strategy['amounts'].append(trade_amount)
-        
-        if won:
-            print(f"✅ {asset} WIN at C{cycle}S{step}! Resetting global state to C1S1")
-            print(f"🔍 DEBUG: Before reset - Global: C{self.global_cycle}S{self.global_step}")
-            # WIN resets GLOBAL state to C1S1 - all future assets start at C1S1
-            self.global_cycle = 1
-            self.global_step = 1
-            print(f"🔍 DEBUG: After reset - Global: C{self.global_cycle}S{self.global_step}")
-            # Reset this asset's strategy
-            strategy['cycle'] = 1
-            strategy['step'] = 1
-            strategy['amounts'] = []
-            return {'action': 'reset', 'asset': asset, 'next_cycle': 1, 'next_step': 1}
-        else:
-            print(f"❌ {asset} LOSS at C{cycle}S{step}!")
-            
-            if step < self.max_steps_per_cycle:
-                # Move to next step in same cycle (same asset)
-                strategy['step'] += 1
-                print(f"🔄 Moving to C{cycle}S{strategy['step']} for {asset}")
-                return {'action': 'continue', 'asset': asset, 'next_cycle': cycle, 'next_step': strategy['step']}
-            else:
-                # Step 3 of current cycle lost - advance GLOBAL cycle for NEXT assets
-                if cycle < self.max_cycles:
-                    # Advance global cycle for next assets
-                    self.global_cycle = cycle + 1
-                    self.global_step = 1
-                    print(f"🔄 {asset} C{cycle}S3 LOST! Next assets will start at C{self.global_cycle}S1")
-                    
-                    # Mark this asset as completed (no more trades for this asset)
-                    strategy['cycle'] = cycle + 1  # For status display
-                    strategy['step'] = 1
-                    strategy['amounts'] = []
-                    return {'action': 'asset_completed', 'asset': asset, 'next_cycle': self.global_cycle, 'next_step': 1}
-                else:
-                    # All 2 cycles completed - reset global state to C1S1
-                    print(f"🔄 {asset} C2S3 LOST! All cycles completed - resetting global state to C1S1")
-                    self.global_cycle = 1
-                    self.global_step = 1
-                    
-                    # Reset this asset's strategy
-                    strategy['cycle'] = 1
-                    strategy['step'] = 1
-                    strategy['amounts'] = []
-                    return {'action': 'reset_after_max_loss', 'asset': asset, 'next_cycle': 1, 'next_step': 1}
-    
-    def get_status(self, asset: str) -> str:
-        """Get current strategy status for specific asset"""
-        if asset not in self.asset_strategies:
-            return f"{asset}: C{self.global_cycle}S{self.global_step} (${self.get_current_amount(asset):.2f}) [NEW]"
-        
-        strategy = self.asset_strategies[asset]
-        cycle = strategy['cycle']
-        step = strategy['step']
-        current_amount = self.get_current_amount(asset)
-        return f"{asset}: C{cycle}S{step} (${current_amount:.2f})"
-    
-    def get_all_active_assets(self) -> List[str]:
-        """Get all assets currently being tracked"""
-        return list(self.asset_strategies.keys())
-    
-    def should_prioritize_existing_sequences(self) -> bool:
-        """Check if any asset is in the middle of a cycle sequence"""
-        for asset, strategy in self.asset_strategies.items():
-            if strategy['cycle'] > 1 or strategy['step'] > 1:
-                return True
-        return False
-    
-    def show_global_status(self):
-        """Show global cycle state"""
-        print(f"🌍 Global Cycle State: C{self.global_cycle}S{self.global_step} (new assets start here)")
-    
-    def show_strategy_status(self):
-        """Show current status of all assets and global cycle state"""
-        print("📊 Current Strategy Status:")
-        print(f"   🌍 Global Cycle State: C{self.global_cycle}S{self.global_step} (new assets start here)")
-        
-        if not self.asset_strategies:
-            print("   📊 No active assets")
-            return
-            
-        print("   📊 Asset Status:")
-        for asset, strategy in self.asset_strategies.items():
-            cycle = strategy['cycle']
-            step = strategy['step']
-            current_amount = self.get_current_amount(asset)
-            
-            if cycle == 1 and step == 1:
-                status = "✅ Ready for new signal"
-            else:
-                status = f"🔄 In cycle sequence"
-                
-            print(f"      {asset}: C{cycle}S{step} (${current_amount:.2f}) - {status}")
-    
-    def get_assets_in_sequence(self) -> List[str]:
-        """Get assets that are currently in cycle sequence"""
-        assets_in_sequence = []
-        for asset, strategy in self.asset_strategies.items():
-            if strategy['cycle'] > 1 or strategy['step'] > 1:
-                assets_in_sequence.append(asset)
-        return assets_in_sequence
-    
-    def get_assets_at_step1(self) -> List[str]:
-        """Get assets that are at C1S1 (ready for new signals)"""
-        assets_at_step1 = []
-        for asset, strategy in self.asset_strategies.items():
-            if strategy['cycle'] == 1 and strategy['step'] == 1:
-                assets_at_step1.append(asset)
-        return assets_at_step1
-
 class TwoStepMartingaleStrategy:
     """3-Cycle 2-Step Martingale: Cycle progression across different assets"""
     
@@ -716,14 +252,11 @@ class TwoStepMartingaleStrategy:
         """Get current cycle for specific asset - uses global cycle state for new assets"""
         if asset not in self.asset_strategies:
             # New asset starts at current global cycle and step
-            print(f"🔍 DEBUG: New asset {asset} starting at global C{self.global_cycle}S{self.global_step}")
             self.asset_strategies[asset] = {
                 'cycle': self.global_cycle, 
                 'step': self.global_step, 
                 'amounts': []
             }
-        else:
-            print(f"🔍 DEBUG: Existing asset {asset} at C{self.asset_strategies[asset]['cycle']}S{self.asset_strategies[asset]['step']} (global: C{self.global_cycle}S{self.global_step})")
         return self.asset_strategies[asset]['cycle']
     
     def get_current_amount(self, asset: str) -> float:
@@ -782,11 +315,9 @@ class TwoStepMartingaleStrategy:
         
         if won:
             print(f"✅ {asset} WIN at C{cycle}S{step}! Resetting global state to C1S1")
-            print(f"🔍 DEBUG: Before reset - Global: C{self.global_cycle}S{self.global_step}")
             # WIN resets GLOBAL state to C1S1 - all future assets start at C1S1
             self.global_cycle = 1
             self.global_step = 1
-            print(f"🔍 DEBUG: After reset - Global: C{self.global_cycle}S{self.global_step}")
             # Reset this asset's strategy
             strategy['cycle'] = 1
             strategy['step'] = 1
@@ -943,14 +474,11 @@ class FourCycleMartingaleStrategy:
         """Get current cycle for specific asset - uses global cycle state for new assets"""
         if asset not in self.asset_strategies:
             # New asset starts at current global cycle and step
-            print(f"🔍 DEBUG: New asset {asset} starting at global C{self.global_cycle}S{self.global_step}")
             self.asset_strategies[asset] = {
                 'cycle': self.global_cycle, 
                 'step': self.global_step, 
                 'amounts': []
             }
-        else:
-            print(f"🔍 DEBUG: Existing asset {asset} at C{self.asset_strategies[asset]['cycle']}S{self.asset_strategies[asset]['step']} (global: C{self.global_cycle}S{self.global_step})")
         return self.asset_strategies[asset]['cycle']
     
     def get_current_amount(self, asset: str) -> float:
@@ -1016,11 +544,9 @@ class FourCycleMartingaleStrategy:
         
         if won:
             print(f"✅ {asset} WIN at C{cycle}S{step}! Resetting global state to C1S1")
-            print(f"🔍 DEBUG: Before reset - Global: C{self.global_cycle}S{self.global_step}")
             # WIN resets GLOBAL state to C1S1 - all future assets start at C1S1
             self.global_cycle = 1
             self.global_step = 1
-            print(f"🔍 DEBUG: After reset - Global: C{self.global_cycle}S{self.global_step}")
             # Reset this asset's strategy
             strategy['cycle'] = 1
             strategy['step'] = 1
@@ -1180,14 +706,11 @@ class FiveCycleMartingaleStrategy:
         """Get current cycle for specific asset - uses global cycle state for new assets"""
         if asset not in self.asset_strategies:
             # New asset starts at current global cycle and step
-            print(f"🔍 DEBUG: New asset {asset} starting at global C{self.global_cycle}S{self.global_step}")
             self.asset_strategies[asset] = {
                 'cycle': self.global_cycle, 
                 'step': self.global_step, 
                 'amounts': []
             }
-        else:
-            print(f"🔍 DEBUG: Existing asset {asset} at C{self.asset_strategies[asset]['cycle']}S{self.asset_strategies[asset]['step']} (global: C{self.global_cycle}S{self.global_step})")
         return self.asset_strategies[asset]['cycle']
     
     def get_current_amount(self, asset: str) -> float:
@@ -1260,11 +783,9 @@ class FiveCycleMartingaleStrategy:
         
         if won:
             print(f"✅ {asset} WIN at C{cycle}S{step}! Resetting global state to C1S1")
-            print(f"🔍 DEBUG: Before reset - Global: C{self.global_cycle}S{self.global_step}")
             # WIN resets GLOBAL state to C1S1 - all future assets start at C1S1
             self.global_cycle = 1
             self.global_step = 1
-            print(f"🔍 DEBUG: After reset - Global: C{self.global_cycle}S{self.global_step}")
             # Reset this asset's strategy
             strategy['cycle'] = 1
             strategy['step'] = 1
@@ -1421,14 +942,11 @@ class ThreeStepMartingaleStrategy:
         """Get current cycle for specific asset - uses global cycle state for new assets"""
         if asset not in self.asset_strategies:
             # New asset starts at current global cycle and step
-            print(f"🔍 DEBUG: New asset {asset} starting at global C{self.global_cycle}S{self.global_step}")
             self.asset_strategies[asset] = {
                 'cycle': self.global_cycle, 
                 'step': self.global_step, 
                 'amounts': []
             }
-        else:
-            print(f"🔍 DEBUG: Existing asset {asset} at C{self.asset_strategies[asset]['cycle']}S{self.asset_strategies[asset]['step']} (global: C{self.global_cycle}S{self.global_step})")
         return self.asset_strategies[asset]['cycle']
     
     def get_current_amount(self, asset: str) -> float:
@@ -1488,11 +1006,9 @@ class ThreeStepMartingaleStrategy:
         
         if won:
             print(f"✅ {asset} WIN at C{cycle}S{step}! Resetting global state to C1S1")
-            print(f"🔍 DEBUG: Before reset - Global: C{self.global_cycle}S{self.global_step}")
             # WIN resets GLOBAL state to C1S1 - all future assets start at C1S1
             self.global_cycle = 1
             self.global_step = 1
-            print(f"🔍 DEBUG: After reset - Global: C{self.global_cycle}S{self.global_step}")
             # Reset this asset's strategy
             strategy['cycle'] = 1
             strategy['step'] = 1
@@ -1610,15 +1126,6 @@ class MultiAssetPreciseTrader:
         # Load trade timing offset from config file
         self.trade_offset_seconds = 0  # Always execute exactly at signal time
         
-        # Channel selection and trade duration settings (simplified)
-        self.active_channel = None  # Will be set by user
-        self.james_martin_duration = 300  # 5:00 for James Martin
-        self.lc_trader_duration = 300   # 5:00 for LC Trader
-        self.po_advance_bot_duration = 60  # 1:00 for PO ADVANCE BOT
-        self.logic_5_cycle_duration = 60  # 1:00 for Logic 5 Cycle
-        self.pocket_option_sign_duration = 60  # 1:00 for Pocket Option Sign
-        self.new_channel_7_duration = 60  # 1:00 for Trade x po
-        
         # Use date-based CSV filename - support all channels
         # Will be auto-updated to find latest available CSV
         self.james_martin_csv = None
@@ -1626,13 +1133,19 @@ class MultiAssetPreciseTrader:
         self.po_advance_bot_csv = None
         self.logic_5_cycle_csv = None
         self.pocket_option_sign_csv = None
-        self.new_channel_7_csv = None
         self.current_csv_date = None
-        self._update_csv_filenames(show_info=True)
+        self._update_csv_filenames()
+        
+        # Channel selection and trade duration settings
+        self.active_channel = None  # Will be set by user
+        self.james_martin_duration = 60  # 60 seconds (1:00) for James Martin
+        self.lc_trader_duration = 300   # 5:00 (300 seconds) for LC Trader
+        self.po_advance_bot_duration = 60  # 60 seconds (1:00) for PO ADVANCE BOT
+        self.logic_5_cycle_duration = 60  # 60 seconds (1:00) for Logic 5 Cycle
+        self.pocket_option_sign_duration = 60  # 60 seconds (1:00) for Pocket Option Sign
         
         self.trade_history = []
         self.pending_immediate_trades = []  # Queue for immediate next step trades
-        self.executed_signals = set()  # Track executed signal combinations to prevent duplicates
         
         # API health tracking
         self.api_failures = 0
@@ -1669,7 +1182,7 @@ class MultiAssetPreciseTrader:
         print(f"📊 PO ADVANCE BOT CSV: {self.po_advance_bot_csv}")
         print(f"📊 Logic 5 Cycle CSV: {self.logic_5_cycle_csv}")
         print(f"📊 Pocket Option Sign CSV: {self.pocket_option_sign_csv}")
-        print(f"⏰ Trade Durations: James Martin (5:00) | LC Trader (5:00) | PO ADVANCE BOT (1:00) | Logic 5 Cycle (1:00) | Pocket Option Sign (1:00)")
+        print(f"⏰ Trade Durations: James Martin (1:00) | LC Trader (5:00) | PO ADVANCE BOT (1:00) | Logic 5 Cycle (1:00) | Pocket Option Sign (1:00)")
         print(f"🎯 Active Channel: {self.active_channel or 'Not selected'}")
         print(f"⏱️  Execution: Exactly at signal time + 10ms")
         
@@ -1685,78 +1198,166 @@ class MultiAssetPreciseTrader:
             print(f"🎯 Take Profit: Disabled")
     
     
-    def _update_csv_filenames(self, show_info: bool = False):
-        """Set fixed CSV filenames for each channel (no date-based naming)"""
-        # Use FIXED CSV filenames that match simple_monitor.py exactly
-        self.james_martin_csv = "pocketoption_james_martin_vip_channel_m1.csv"
-        self.lc_trader_csv = "pocketoption_lc_trader.csv"
-        self.po_advance_bot_csv = "pocketoption_po_advance_bot.csv"
-        self.logic_5_cycle_csv = "pocketoption_logic_5_cycle.csv"
-        self.pocket_option_sign_csv = "pocketoption_pocket_option_sign.csv"
-        self.new_channel_7_csv = "pocketoption_new_channel_7.csv"
+    def _update_csv_filenames(self):
+        """Automatically find and use TODAY'S CSV files for each channel - no future dates"""
+        import glob
         
-        # Only show detailed info when requested (during initialization)
-        if show_info:
-            # Show only the selected channel's CSV file, not all channels
-            if self.active_channel:
-                # Get the selected channel's CSV file and details
-                if self.active_channel == "james_martin":
-                    selected_csv = self.james_martin_csv
-                    selected_name = "James Martin VIP"
-                elif self.active_channel == "lc_trader":
-                    selected_csv = self.lc_trader_csv
-                    selected_name = "LC Trader"
-                elif self.active_channel == "po_advance_bot":
-                    selected_csv = self.po_advance_bot_csv
-                    selected_name = "PO ADVANCE BOT"
-                elif self.active_channel == "logic_5_cycle":
-                    selected_csv = self.logic_5_cycle_csv
-                    selected_name = "Logic 5 Cycle"
-                elif self.active_channel == "pocket_option_sign":
-                    selected_csv = self.pocket_option_sign_csv
-                    selected_name = "Pocket Option Sign"
-                elif self.active_channel == "new_channel_7":
-                    selected_csv = self.new_channel_7_csv
-                    selected_name = "Trade x po"
-                else:
-                    selected_csv = None
-                    selected_name = "Unknown"
-                
-                if selected_csv:
-                    print(f"📊 Using CSV file for selected channel:")
-                    if os.path.exists(selected_csv):
-                        # Get file size and modification time
-                        file_size = os.path.getsize(selected_csv)
-                        mod_time = datetime.fromtimestamp(os.path.getmtime(selected_csv)).strftime('%Y-%m-%d %H:%M:%S')
-                        print(f"   ✅ {selected_name}: {selected_csv} ({file_size} bytes, modified: {mod_time})")
-                    else:
-                        print(f"   ❌ {selected_name}: {selected_csv} (file not found)")
+        today = datetime.now().strftime('%Y%m%d')
+        
+        # Check if we need to update (date changed or first run)
+        if self.current_csv_date == today and self.james_martin_csv and self.lc_trader_csv and self.po_advance_bot_csv and self.logic_5_cycle_csv and self.pocket_option_sign_csv:
+            return  # Already up to date
+        
+        old_date = self.current_csv_date
+        self.current_csv_date = today
+        
+        # Find James Martin CSV files - ONLY TODAY'S DATE
+        today_james = f"pocketoption_james_martin_vip_channel_m1_{today}.csv"
+        if os.path.exists(today_james):
+            self.james_martin_csv = today_james
+            if old_date != today:
+                print(f"✅ Using TODAY'S James Martin CSV: {today_james}")
+        else:
+            # Fallback to latest available, but prefer today
+            james_pattern = "pocketoption_james_martin_vip_channel_m1_*.csv"
+            james_files = glob.glob(james_pattern)
+            if james_files:
+                james_files.sort(reverse=True)
+                self.james_martin_csv = james_files[0]
+                if old_date != today:
+                    print(f"⚠️ Today's James Martin CSV not found, using: {james_files[0]}")
             else:
-                print(f"📊 No channel selected - CSV files available but not loaded")
+                self.james_martin_csv = today_james
+                if old_date != today:
+                    print(f"📄 Will create James Martin CSV: {today_james}")
         
-        # Set current date for tracking (but don't use in filenames)
-        self.current_csv_date = datetime.now().strftime('%Y-%m-%d')
+        # Find LC Trader CSV files - ONLY TODAY'S DATE
+        today_lc = f"pocketoption_lc_trader_{today}.csv"
+        if os.path.exists(today_lc):
+            self.lc_trader_csv = today_lc
+            if old_date != today:
+                print(f"✅ Using TODAY'S LC Trader CSV: {today_lc}")
+        else:
+            # Fallback to latest available, but prefer today
+            lc_pattern = "pocketoption_lc_trader_*.csv"
+            lc_files = glob.glob(lc_pattern)
+            if lc_files:
+                lc_files.sort(reverse=True)
+                self.lc_trader_csv = lc_files[0]
+                if old_date != today:
+                    print(f"⚠️ Today's LC Trader CSV not found, using: {lc_files[0]}")
+            else:
+                self.lc_trader_csv = today_lc
+                if old_date != today:
+                    print(f"📄 Will create LC Trader CSV: {today_lc}")
+        
+        # Find PO ADVANCE BOT CSV files - ONLY TODAY'S DATE
+        today_po_advance = f"pocketoption_po_advance_bot_{today}.csv"
+        if os.path.exists(today_po_advance):
+            self.po_advance_bot_csv = today_po_advance
+            if old_date != today:
+                print(f"✅ Using TODAY'S PO ADVANCE BOT CSV: {today_po_advance}")
+        else:
+            # Fallback to latest available, but prefer today
+            po_advance_pattern = "pocketoption_po_advance_bot_*.csv"
+            po_advance_files = glob.glob(po_advance_pattern)
+            if po_advance_files:
+                po_advance_files.sort(reverse=True)
+                self.po_advance_bot_csv = po_advance_files[0]
+                if old_date != today:
+                    print(f"⚠️ Today's PO ADVANCE BOT CSV not found, using: {po_advance_files[0]}")
+            else:
+                self.po_advance_bot_csv = today_po_advance
+                if old_date != today:
+                    print(f"📄 Will create PO ADVANCE BOT CSV: {today_po_advance}")
+        
+        # Find Logic 5 Cycle CSV files - ONLY TODAY'S DATE
+        today_logic_5_cycle = f"pocketoption_logic_5_cycle_{today}.csv"
+        if os.path.exists(today_logic_5_cycle):
+            self.logic_5_cycle_csv = today_logic_5_cycle
+            if old_date != today:
+                print(f"✅ Using TODAY'S Logic 5 Cycle CSV: {today_logic_5_cycle}")
+        else:
+            # Fallback to latest available, but prefer today
+            logic_5_cycle_pattern = "pocketoption_logic_5_cycle_*.csv"
+            logic_5_cycle_files = glob.glob(logic_5_cycle_pattern)
+            if logic_5_cycle_files:
+                logic_5_cycle_files.sort(reverse=True)
+                self.logic_5_cycle_csv = logic_5_cycle_files[0]
+                if old_date != today:
+                    print(f"⚠️ Today's Logic 5 Cycle CSV not found, using: {logic_5_cycle_files[0]}")
+            else:
+                self.logic_5_cycle_csv = today_logic_5_cycle
+                if old_date != today:
+                    print(f"📄 Will create Logic 5 Cycle CSV: {today_logic_5_cycle}")
+        
+        # Find Pocket Option Sign CSV files - ONLY TODAY'S DATE
+        today_pocket_option_sign = f"pocketoption_pocket_option_sign_{today}.csv"
+        if os.path.exists(today_pocket_option_sign):
+            self.pocket_option_sign_csv = today_pocket_option_sign
+            if old_date != today:
+                print(f"✅ Using TODAY'S Pocket Option Sign CSV: {today_pocket_option_sign}")
+        else:
+            # Fallback to latest available, but prefer today
+            pocket_option_sign_pattern = "pocketoption_pocket_option_sign_*.csv"
+            pocket_option_sign_files = glob.glob(pocket_option_sign_pattern)
+            if pocket_option_sign_files:
+                pocket_option_sign_files.sort(reverse=True)
+                self.pocket_option_sign_csv = pocket_option_sign_files[0]
+                if old_date != today:
+                    print(f"⚠️ Today's Pocket Option Sign CSV not found, using: {pocket_option_sign_files[0]}")
+            else:
+                self.pocket_option_sign_csv = today_pocket_option_sign
+                if old_date != today:
+                    print(f"📄 Will create Pocket Option Sign CSV: {today_pocket_option_sign}")
+        
+        # Log the update
+        if old_date and old_date != today:
+            print(f"\n� DATE CHANGED: {old_date} → {today}")
+            print(f"📄 CSV FILES UPDATED:")
+            print(f"   📊 James Martin: {self.james_martin_csv}")
+            print(f"   📊 LC Trader: {self.lc_trader_csv}")
+            print(f"   📊 PO ADVANCE BOT: {self.po_advance_bot_csv}")
+            print(f"   📊 Logic 5 Cycle: {self.logic_5_cycle_csv}")
+            print(f"   📊 Pocket Option Sign: {self.pocket_option_sign_csv}")
+            print("-" * 60)
+        elif not old_date:
+            # First run
+            print(f"📄 CSV FILES DETECTED:")
+            print(f"   📊 James Martin: {self.james_martin_csv}")
+            print(f"   📊 LC Trader: {self.lc_trader_csv}")
+            print(f"   📊 PO ADVANCE BOT: {self.po_advance_bot_csv}")
+            print(f"   📊 Logic 5 Cycle: {self.logic_5_cycle_csv}")
+            print(f"   📊 Pocket Option Sign: {self.pocket_option_sign_csv}")
     
     def _validate_duration(self, duration: int, channel: str = None) -> int:
-        """Simple duration validation - return as-is"""
-        return duration
-    
-    def get_channel_duration(self, channel: str) -> int:
-        """Get duration in seconds for specific channel"""
+        """Ensure duration matches channel requirements"""
         if channel == "james_martin":
-            return self.james_martin_duration
+            if duration != 60:
+                print(f"⚠️ James Martin duration {duration}s adjusted to 60s (1:00)")
+                return 60
+            return duration
         elif channel == "lc_trader":
-            return self.lc_trader_duration
+            if duration != 300:
+                print(f"⚠️ LC Trader duration {duration}s adjusted to 5:00 (300s)")
+                return 300
+            return duration
         elif channel == "po_advance_bot":
-            return self.po_advance_bot_duration
+            if duration != 60:
+                print(f"⚠️ PO ADVANCE BOT duration {duration}s adjusted to 60s (1:00)")
+                return 60
+            return duration
         elif channel == "logic_5_cycle":
-            return self.logic_5_cycle_duration
-        elif channel == "pocket_option_sign":
-            return self.pocket_option_sign_duration
-        elif channel == "new_channel_7":
-            return self.new_channel_7_duration
+            if duration != 60:
+                print(f"⚠️ Logic 5 Cycle duration {duration}s adjusted to 60s (1:00)")
+                return 60
+            return duration
         else:
-            return 60  # Default fallback
+            # Default behavior for backward compatibility
+            if duration != 60:
+                print(f"⚠️ Duration {duration}s adjusted to 60s (1:00)")
+                return 60
+            return duration
     
     def should_use_api(self, asset: str) -> bool:
         """Check if API is available and connected"""
@@ -1856,8 +1457,8 @@ class MultiAssetPreciseTrader:
             self.client = None
             raise Exception(f"Connection error: {e}")
     
-    def get_signals_from_csv(self, target_date: str = None) -> List[Dict[str, Any]]:
-        """Get trading signals from selected channel CSV file with date filtering and current time focus"""
+    def get_signals_from_csv(self) -> List[Dict[str, Any]]:
+        """Get trading signals from selected channel CSV file"""
         try:
             # Update CSV filenames in case date has changed
             self._update_csv_filenames()
@@ -1883,10 +1484,6 @@ class MultiAssetPreciseTrader:
                 csv_file = self.pocket_option_sign_csv
                 trade_duration = self.pocket_option_sign_duration
                 channel_name = "Pocket Option Sign"
-            elif self.active_channel == "new_channel_7":
-                csv_file = self.new_channel_7_csv
-                trade_duration = self.new_channel_7_duration
-                channel_name = "Trade x po"
             else:
                 return []
             
@@ -1903,14 +1500,8 @@ class MultiAssetPreciseTrader:
             if signals_df.empty:
                 return []
             
-            # Get current time for filtering
-            current_time = get_user_time()
-            current_date_str = current_time.strftime('%Y-%m-%d')
-            
-            # Use current date for signal filtering
-            filter_date_str = current_date_str
-            
             signals = []
+            current_time = get_user_time()
             
             for _, row in signals_df.iterrows():
                 try:
@@ -1940,30 +1531,42 @@ class MultiAssetPreciseTrader:
                             print(f"⚠️ Invalid signal time format: {signal_time_str} for {asset}")
                             continue
                         
-                        # Create signal datetime for the target date
-                        signal_date = datetime.strptime(filter_date_str, '%Y-%m-%d').date()
-                        signal_datetime = datetime.combine(signal_date, datetime.min.time().replace(
+                        # Set to today's date ONLY - no future dates (user timezone)
+                        signal_datetime = current_time.replace(
                             hour=signal_time.hour,
                             minute=signal_time.minute,
-                            second=signal_time.second if signal_time_str.count(':') == 2 else 0
-                        ))
+                            second=signal_time.second if signal_time_str.count(':') == 2 else 0,
+                            microsecond=0
+                        )
                         
-                        # Convert to user timezone
-                        if USER_TIMEZONE:
-                            signal_datetime = signal_datetime.replace(tzinfo=USER_TIMEZONE)
+                        # Skip signals that have passed today - focus only on current date
+                        if signal_datetime <= current_time:
+                            # Check if signal is from today but already passed
+                            time_passed = (current_time - signal_datetime).total_seconds()
+                            if time_passed > 300:  # More than 5 minutes ago
+                                continue
                         
-                        # Only include upcoming signals (future or current time)
-                        time_until_signal = (signal_datetime - current_time).total_seconds()
-                        if time_until_signal < -60:  # Signal was more than 1 minute ago - skip it
+                        # Ensure signal is for TODAY only
+                        today_date = current_time.date()
+                        signal_date = signal_datetime.date()
+                        if signal_date != today_date:
                             continue
                         
                         # Execute exactly at signal time (no offset)
                         trade_datetime = signal_datetime
                         
-                        # Use channel-specific duration
-                        duration_seconds = trade_duration
+                        # Simple 60-second duration
+                        close_datetime = trade_datetime + timedelta(seconds=60)
                         
-                        close_datetime = trade_datetime + timedelta(seconds=duration_seconds)
+                        # Skip past trades (more than 2 minutes ago)
+                        time_diff = (trade_datetime - current_time).total_seconds()
+                        if time_diff < -120:
+                            continue
+                        
+                        # Skip signals that are more than 30 seconds old
+                        signal_age = (current_time - signal_datetime).total_seconds()
+                        if signal_age > 30:
+                            continue
                         
                     except ValueError as e:
                         print(f"⚠️ Signal time parsing error for {asset}: {signal_time_str} - {e}")
@@ -1975,12 +1578,11 @@ class MultiAssetPreciseTrader:
                         'signal_time': signal_time_str,
                         'signal_datetime': signal_datetime,
                         'trade_datetime': trade_datetime,  # exactly at signal time
-                        'close_datetime': close_datetime,  # channel-specific duration
+                        'close_datetime': close_datetime,  # 60 seconds later
                         'timestamp': get_user_time().isoformat(),
                         'message_text': str(row.get('message_text', ''))[:100],
                         'channel': self.active_channel,
-                        'duration': duration_seconds,  # Channel-specific duration
-                        'date_filter': filter_date_str
+                        'duration': 60  # Fixed 60 seconds
                     }
                     
                     # Add all valid signals (will be filtered by readiness in main loop)
@@ -1991,18 +1593,7 @@ class MultiAssetPreciseTrader:
             
             # Sort by trade execution time
             signals.sort(key=lambda x: x['trade_datetime'])
-            
-            # Remove duplicate signals (same asset+direction+time) to prevent multiple executions
-            unique_signals = []
-            seen_combinations = set()
-            for signal in signals:
-                signal_key = f"{signal['asset']}_{signal['direction']}_{signal['signal_datetime'].strftime('%H:%M:%S')}"
-                if signal_key not in seen_combinations:
-                    unique_signals.append(signal)
-                    seen_combinations.add(signal_key)
-            
-            # Return unique signals only
-            return unique_signals
+            return signals
             
         except Exception as e:
             logger.error(f"Error reading CSV: {e}")
@@ -2050,16 +1641,15 @@ class MultiAssetPreciseTrader:
         try:
             # Execute trade based on step
             if current_step == 1:
-                # For Step 1, use precise timing with channel-specific duration
-                duration_seconds = self.get_channel_duration(channel or self.active_channel)
+                # For Step 1, use precise timing
                 won, profit = await self.execute_precise_trade({
                     'asset': asset,
                     'direction': direction,
                     'trade_datetime': get_user_time(),
                     'signal_datetime': get_user_time(),
-                    'close_datetime': get_user_time() + timedelta(seconds=duration_seconds),
+                    'close_datetime': get_user_time() + timedelta(seconds=60),
                     'channel': channel or self.active_channel,
-                    'duration': duration_seconds
+                    'duration': 60
                 }, step_amount)
             else:
                 # For Step 2, execute immediately
@@ -2108,16 +1698,15 @@ class MultiAssetPreciseTrader:
         try:
             # Execute trade based on step
             if current_step == 1:
-                # For Step 1, use precise timing with channel-specific duration
-                duration_seconds = self.get_channel_duration(channel or self.active_channel)
+                # For Step 1, use precise timing
                 won, profit = await self.execute_precise_trade({
                     'asset': asset,
                     'direction': direction,
                     'trade_datetime': get_user_time(),
                     'signal_datetime': get_user_time(),
-                    'close_datetime': get_user_time() + timedelta(seconds=duration_seconds),
+                    'close_datetime': get_user_time() + timedelta(seconds=60),
                     'channel': channel or self.active_channel,
-                    'duration': duration_seconds
+                    'duration': 60
                 }, step_amount)
             else:
                 # For Step 2, execute immediately
@@ -2268,128 +1857,6 @@ class MultiAssetPreciseTrader:
             strategy.record_result(False, asset, step_amount)
             return False, -step_amount, 'error'
 
-    async def execute_single_2cycle_2step_trade(self, asset: str, direction: str, base_amount: float, strategy: 'TwoCycleTwoStepMartingaleStrategy', channel: str = None) -> Tuple[bool, float, str]:
-        """Execute a single trade in the 2-cycle 2-step sequence and return next action"""
-        current_cycle = strategy.get_asset_cycle(asset)
-        current_step = strategy.get_asset_step(asset)
-        step_amount = strategy.get_current_amount(asset)
-        
-        print(f"📊 C{current_cycle}S{current_step}: {asset} {direction.upper()} ${step_amount}")
-        print(f"⏱️  Trade execution at: {get_user_time_str()}")
-        
-        try:
-            # Execute trade based on step
-            if current_step == 1:
-                # For Step 1, use precise timing
-                won, profit = await self.execute_precise_trade({
-                    'asset': asset,
-                    'direction': direction,
-                    'trade_datetime': get_user_time(),
-                    'signal_datetime': get_user_time(),
-                    'close_datetime': get_user_time() + timedelta(seconds=60),
-                    'channel': channel or self.active_channel,
-                    'duration': 60
-                }, step_amount)
-            else:
-                # For Step 2, execute immediately
-                won, profit = await self.execute_immediate_trade(asset, direction, step_amount, channel or self.active_channel)
-            
-            # Record result and get next action
-            next_action = strategy.record_result(won, asset, step_amount)
-            
-            if won:
-                print(f"✅ {asset} WIN at C{current_cycle}S{current_step}! Profit: ${profit:+.2f}")
-                return True, profit, 'completed'
-            else:
-                print(f"❌ {asset} LOSS at C{current_cycle}S{current_step}! Loss: ${profit:+.2f}")
-                
-                if next_action['action'] == 'continue':
-                    # Move to next step in same cycle (same asset)
-                    print(f"🔄 Moving to C{current_cycle}S{next_action['next_step']} for {asset}")
-                    return False, profit, 'continue'
-                elif next_action['action'] == 'asset_completed':
-                    # Asset completed - no more trades for this asset
-                    print(f"🔄 {asset} completed - cycle advanced for next assets")
-                    return False, profit, 'completed'
-                elif next_action['action'] in ['reset', 'reset_after_max_loss']:
-                    # Strategy reset
-                    print(f"🔄 {asset} - Strategy reset for next signal")
-                    return False, profit, 'completed'
-                else:
-                    print(f"🚨 {asset} - Unexpected action: {next_action['action']}")
-                    return False, profit, 'completed'
-                    
-        except Exception as e:
-            print(f"❌ C{current_cycle}S{current_step} error for {asset}: {e}")
-            # Record as loss
-            strategy.record_result(False, asset, step_amount)
-            return False, -step_amount, 'error'
-
-    async def execute_single_2cycle_3step_trade(self, asset: str, direction: str, base_amount: float, strategy: 'TwoCycleThreeStepMartingaleStrategy', channel: str = None) -> Tuple[bool, float, str]:
-        """Execute a single trade in the 2-cycle 3-step sequence and return next action"""
-        current_cycle = strategy.get_asset_cycle(asset)
-        current_step = strategy.get_asset_step(asset)
-        step_amount = strategy.get_current_amount(asset)
-        
-        print(f"📊 C{current_cycle}S{current_step}: {asset} {direction.upper()} ${step_amount}")
-        print(f"⏱️  Trade execution at: {get_user_time_str()}")
-        
-        # Special display for Step 4 (C2S1) which uses sum of first 3 steps
-        if current_cycle == 2 and current_step == 1:
-            c1s1 = base_amount
-            c1s2 = base_amount * strategy.multiplier
-            c1s3 = base_amount * (strategy.multiplier ** 2)
-            sum_first_3 = c1s1 + c1s2 + c1s3
-            print(f"🔢 Step 4 Logic: ${c1s1:.2f} + ${c1s2:.2f} + ${c1s3:.2f} = ${sum_first_3:.2f}")
-        
-        try:
-            # Execute trade based on step
-            if current_step == 1:
-                # For Step 1, use precise timing
-                won, profit = await self.execute_precise_trade({
-                    'asset': asset,
-                    'direction': direction,
-                    'trade_datetime': get_user_time(),
-                    'signal_datetime': get_user_time(),
-                    'close_datetime': get_user_time() + timedelta(seconds=60),
-                    'channel': channel or self.active_channel,
-                    'duration': 60
-                }, step_amount)
-            else:
-                # For Step 2 and 3, execute immediately
-                won, profit = await self.execute_immediate_trade(asset, direction, step_amount, channel or self.active_channel)
-            
-            # Record result and get next action
-            next_action = strategy.record_result(won, asset, step_amount)
-            
-            if won:
-                print(f"✅ {asset} WIN at C{current_cycle}S{current_step}! Profit: ${profit:+.2f}")
-                return True, profit, 'completed'
-            else:
-                print(f"❌ {asset} LOSS at C{current_cycle}S{current_step}! Loss: ${profit:+.2f}")
-                
-                if next_action['action'] == 'continue':
-                    # Move to next step in same cycle (same asset)
-                    print(f"🔄 Moving to C{current_cycle}S{next_action['next_step']} for {asset}")
-                    return False, profit, 'continue'
-                elif next_action['action'] == 'asset_completed':
-                    # Asset completed - no more trades for this asset
-                    print(f"🔄 {asset} completed - cycle advanced for next assets")
-                    return False, profit, 'completed'
-                elif next_action['action'] in ['reset', 'reset_after_max_loss']:
-                    # Strategy reset
-                    print(f"🔄 {asset} - Strategy reset for next signal")
-                    return False, profit, 'completed'
-                else:
-                    print(f"🚨 {asset} - Unexpected action: {next_action['action']}")
-                    return False, profit, 'completed'
-                    
-        except Exception as e:
-            print(f"❌ C{current_cycle}S{current_step} error for {asset}: {e}")
-            # Record as loss
-            strategy.record_result(False, asset, step_amount)
-            return False, -step_amount, 'error'
-
     async def execute_complete_martingale_sequence(self, asset: str, direction: str, amount: float, strategy, channel: str = None) -> Tuple[bool, float]:
         """Execute complete martingale sequence for an asset - wait for each step result before proceeding"""
         total_profit = 0.0
@@ -2406,15 +1873,14 @@ class MultiAssetPreciseTrader:
                 # Execute trade and WAIT for complete result
                 if current_step == 1:
                     # For Step 1, use the signal's scheduled time (if available) or execute immediately
-                    duration_seconds = self.get_channel_duration(channel or self.active_channel)
                     won, profit = await self.execute_precise_trade({
                         'asset': asset,
                         'direction': direction,
                         'trade_datetime': get_user_time(),
                         'signal_datetime': get_user_time(),
-                        'close_datetime': get_user_time() + timedelta(seconds=duration_seconds),
+                        'close_datetime': get_user_time() + timedelta(seconds=60),
                         'channel': channel or self.active_channel,
-                        'duration': duration_seconds
+                        'duration': 60
                     }, step_amount)
                 else:
                     # For Steps 2 and 3, execute immediately with channel-specific duration
@@ -2472,13 +1938,13 @@ class MultiAssetPreciseTrader:
         return False, total_profit
     
     async def execute_immediate_trade(self, asset: str, direction: str, amount: float, channel: str = None) -> Tuple[bool, float]:
-        """Execute immediate trade (for steps 2 and 3) with channel-specific duration"""
+        """Execute immediate trade (for steps 2 and 3) with fixed 60-second duration"""
         try:
             execution_time = get_user_time()
             
-            # Use channel-specific duration
-            dynamic_duration = self.get_channel_duration(channel or self.active_channel)
-            target_close_time = execution_time + timedelta(seconds=dynamic_duration)
+            # Simple 60-second duration
+            dynamic_duration = 60
+            target_close_time = execution_time + timedelta(seconds=60)
             
             # Determine channel name for display
             if channel == "james_martin":
@@ -2528,9 +1994,9 @@ class MultiAssetPreciseTrader:
                     # Improved result checking with appropriate timeout based on duration
                     try:
                         # Use appropriate timeout based on trade duration, but consistent check intervals
-                        if dynamic_duration >= 300:  # LC Trader (5:00) and James Martin (5:00)
+                        if dynamic_duration >= 300:  # LC Trader (5:00)
                             max_wait = min(330.0, dynamic_duration + 30.0)  # Max 330 seconds for 5:00 trades
-                        else:  # PO ADVANCE BOT and others (1:00)
+                        else:  # James Martin (1:00)
                             max_wait = min(80.0, dynamic_duration + 20.0)  # Max 80 seconds for 1:00 trades
                         
                         # Use consistent check interval for both channels
@@ -2626,9 +2092,6 @@ class MultiAssetPreciseTrader:
             elif channel == "logic_5_cycle":
                 dynamic_duration = self.logic_5_cycle_duration
                 channel_name = "Logic 5 Cycle"
-            elif channel == "new_channel_7":
-                dynamic_duration = self.new_channel_7_duration
-                channel_name = "Trade x po"
             else:
                 dynamic_duration = signal.get('duration', 60)  # Use signal duration or default to 1:00
                 channel_name = "Default"
@@ -2672,20 +2135,15 @@ class MultiAssetPreciseTrader:
                         # Less than 1 second away - high precision timing
                         await asyncio.sleep(0.001)  # 1ms precision
             
-            # Calculate target close time using channel-specific duration
-            target_close_time = execution_time + timedelta(seconds=dynamic_duration)
+            # Calculate target close time - simple 60 seconds
+            target_close_time = execution_time + timedelta(seconds=60)
             
-            # Use channel-specific duration (not signal duration)
-            trade_duration = dynamic_duration
+            # Fixed 60-second duration
+            dynamic_duration = 60
             
             print(f"🎯 EXECUTING: {asset} {direction.upper()} ${amount}")
             print(f"⏰ TIMING: Execute {format_time_hmsms(execution_time)} → Close {format_time_hmsms(target_close_time)}")
-            duration_minutes = trade_duration // 60
-            duration_seconds = trade_duration % 60
-            if duration_minutes > 0:
-                print(f"📊 Duration: {trade_duration} seconds ({duration_minutes}:{duration_seconds:02d})")
-            else:
-                print(f"📊 Duration: {trade_duration} seconds (0:{duration_seconds:02d})")
+            print(f"📊 Duration: 60 seconds (1:00)")
             
             if not self.should_use_api(asset):
                 print(f"❌ API not available for {asset}")
@@ -2701,7 +2159,7 @@ class MultiAssetPreciseTrader:
                     asset=asset_name,
                     direction=order_direction,
                     amount=amount,
-                    duration=trade_duration
+                    duration=dynamic_duration
                 )
                 
                 if order_result and order_result.status in [OrderStatus.ACTIVE, OrderStatus.PENDING]:
@@ -2712,10 +2170,10 @@ class MultiAssetPreciseTrader:
                     # Monitor trade result with appropriate timeout based on duration
                     try:
                         # Use appropriate timeout based on trade duration, but consistent check intervals
-                        if trade_duration >= 300:  # LC Trader (5:00) and James Martin (5:00)
-                            max_wait = min(330.0, trade_duration + 30.0)  # Max 330 seconds for 5:00 trades
-                        else:  # PO ADVANCE BOT and others (1:00)
-                            max_wait = min(80.0, trade_duration + 20.0)  # Max 80 seconds for 1:00 trades
+                        if dynamic_duration >= 300:  # LC Trader (5:00)
+                            max_wait = min(330.0, dynamic_duration + 30.0)  # Max 330 seconds for 5:00 trades
+                        else:  # James Martin (1:00)
+                            max_wait = min(80.0, dynamic_duration + 20.0)  # Max 80 seconds for 1:00 trades
                         
                         # Use consistent check interval for both channels
                         check_interval = 0.01  # 10ms check interval for both channels
@@ -2811,7 +2269,7 @@ class MultiAssetPreciseTrader:
                 'signal_time': signal_time.isoformat(),
                 'close_time': actual_close_time.isoformat(),
                 'target_close_time': target_close_time.isoformat(),
-                'duration_seconds': trade_duration,
+                'duration_seconds': dynamic_duration,
                 'timing_strategy': 'precise_user_timezone_10ms_window',
                 'mode': 'real'
             }
@@ -3064,7 +2522,7 @@ class MultiAssetPreciseTrader:
         
         try:
             # Show initial signal overview
-            # Scanning for signals...
+            print(f"\n📊 SCANNING CSV FOR SIGNALS...")
             initial_signals = self.get_signals_from_csv()
             if initial_signals:
                 print(f"✅ Found {len(initial_signals)} signals in CSV:")
@@ -3383,7 +2841,7 @@ class MultiAssetPreciseTrader:
         
         try:
             # Show initial signal overview
-            # Scanning for signals...
+            print(f"\n📊 SCANNING CSV FOR SIGNALS...")
             initial_signals = self.get_signals_from_csv()
             if initial_signals:
                 print(f"✅ Found {len(initial_signals)} signals in CSV:")
@@ -3604,7 +3062,7 @@ class MultiAssetPreciseTrader:
         
         try:
             # Show initial signal overview
-            # Scanning for signals...
+            print(f"\n📊 SCANNING CSV FOR SIGNALS...")
             initial_signals = self.get_signals_from_csv()
             if initial_signals:
                 print(f"✅ Found {len(initial_signals)} signals in CSV:")
@@ -3931,7 +3389,7 @@ class MultiAssetPreciseTrader:
         
         try:
             # Show initial signal overview
-            # Scanning for signals...
+            print(f"\n📊 SCANNING CSV FOR SIGNALS...")
             initial_signals = self.get_signals_from_csv()
             if initial_signals:
                 print(f"✅ Found {len(initial_signals)} signals in CSV:")
@@ -3964,10 +3422,7 @@ class MultiAssetPreciseTrader:
                 signals = self.get_signals_from_csv()
                 
                 if not signals:
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    status_line = f"{current_date} | {current_time_hms} | No signals available"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | No signals available", end="", flush=True)
                     await asyncio.sleep(0.01)  # Check every 10ms
                     continue
                 
@@ -3981,15 +3436,7 @@ class MultiAssetPreciseTrader:
                         continue
                     
                     # Show current time and signal time
-                    # Show clean status line: date | current time | signal time | time remaining
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
-                    time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
-                    
-                    # Clear line and show clean status
-                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {signal['asset']} {signal['direction'].upper()}"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | Signal: {signal_time_str} ({signal['asset']} {signal['direction'].upper()})", end="", flush=True)
                     
                     # Execute when times match exactly
                     if current_time_str == signal_time_str:
@@ -4107,7 +3554,7 @@ class MultiAssetPreciseTrader:
         
         try:
             # Show initial signal overview
-            # Scanning for signals...
+            print(f"\n📊 SCANNING CSV FOR SIGNALS...")
             initial_signals = self.get_signals_from_csv()
             if initial_signals:
                 print(f"✅ Found {len(initial_signals)} signals in CSV:")
@@ -4140,10 +3587,7 @@ class MultiAssetPreciseTrader:
                 signals = self.get_signals_from_csv()
                 
                 if not signals:
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    status_line = f"{current_date} | {current_time_hms} | No signals available"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | No signals available", end="", flush=True)
                     await asyncio.sleep(0.01)  # Check every 10ms
                     continue
                 
@@ -4157,15 +3601,7 @@ class MultiAssetPreciseTrader:
                         continue
                     
                     # Show current time and signal time
-                    # Show clean status line: date | current time | signal time | time remaining
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
-                    time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
-                    
-                    # Clear line and show clean status
-                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {signal['asset']} {signal['direction'].upper()}"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | Signal: {signal_time_str} ({signal['asset']} {signal['direction'].upper()})", end="", flush=True)
                     
                     # Execute when times match exactly
                     if current_time_str == signal_time_str:
@@ -4281,7 +3717,7 @@ class MultiAssetPreciseTrader:
         
         try:
             # Show initial signal overview
-            # Scanning for signals...
+            print(f"\n📊 SCANNING CSV FOR SIGNALS...")
             initial_signals = self.get_signals_from_csv()
             if initial_signals:
                 print(f"✅ Found {len(initial_signals)} signals in CSV:")
@@ -4314,10 +3750,7 @@ class MultiAssetPreciseTrader:
                 signals = self.get_signals_from_csv()
                 
                 if not signals:
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    status_line = f"{current_date} | {current_time_hms} | No signals available"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | No signals available", end="", flush=True)
                     await asyncio.sleep(0.01)  # Check every 10ms
                     continue
                 
@@ -4326,15 +3759,7 @@ class MultiAssetPreciseTrader:
                     signal_time_str = signal['signal_datetime'].strftime('%H:%M:%S')
                     
                     # Show current time and signal time
-                    # Show clean status line: date | current time | signal time | time remaining
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
-                    time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
-                    
-                    # Clear line and show clean status
-                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {signal['asset']} {signal['direction'].upper()}"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | Signal: {signal_time_str} ({signal['asset']} {signal['direction'].upper()})", end="", flush=True)
                     
                     # Execute when times match exactly
                     if current_time_str == signal_time_str:
@@ -4432,7 +3857,7 @@ class MultiAssetPreciseTrader:
         
         try:
             # Show initial signal overview
-            # Scanning for signals...
+            print(f"\n📊 SCANNING CSV FOR SIGNALS...")
             initial_signals = self.get_signals_from_csv()
             if initial_signals:
                 print(f"✅ Found {len(initial_signals)} signals in CSV:")
@@ -4465,10 +3890,7 @@ class MultiAssetPreciseTrader:
                 signals = self.get_signals_from_csv()
                 
                 if not signals:
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    status_line = f"{current_date} | {current_time_hms} | No signals available"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | No signals available", end="", flush=True)
                     await asyncio.sleep(0.01)  # Check every 10ms
                     continue
                 
@@ -4477,15 +3899,7 @@ class MultiAssetPreciseTrader:
                     signal_time_str = signal['signal_datetime'].strftime('%H:%M:%S')
                     
                     # Show current time and signal time
-                    # Show clean status line: date | current time | signal time | time remaining
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
-                    time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
-                    
-                    # Clear line and show clean status
-                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {signal['asset']} {signal['direction'].upper()}"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\rCurrent: {current_time_str} | Signal: {signal_time_str} ({signal['asset']} {signal['direction'].upper()})", end="", flush=True)
                     
                     # Execute when times match exactly
                     if current_time_str == signal_time_str:
@@ -4573,602 +3987,6 @@ class MultiAssetPreciseTrader:
             print("=" * 60)
             print("👋 Thank you for using the 3-Cycle 3-Step Martingale Trader!")
 
-    async def start_2cycle_2step_trading(self, base_amount: float, multiplier: float = 2.5, is_demo: bool = True):
-        """Start 2-Cycle 2-Step Martingale trading: 2 cycles × 2 steps = up to 4 trades"""
-        print(f"\n🚀 2-CYCLE 2-STEP MARTINGALE TRADING STARTED")
-        print("=" * 60)
-        print(f"💰 Base Amount: ${base_amount}")
-        print(f"📈 Multiplier: {multiplier}")
-        print(f"🔄 Cross-Asset 2-Step System: Precise timing with 1-second checks")
-        print(f"⏳ Logic: Wait for exact signal time → Execute → Cross-asset progression")
-        print(f"📅 Date Focus: TODAY ONLY ({get_user_time().strftime('%Y-%m-%d')}) - no future dates")
-        print(f"⏰ Timing: Check every 1 second for signal matches")
-        print(f"✅ WIN at any step → All assets reset to C1S1")
-        print(f"❌ LOSS at Step 1 → Move to Step 2 (same asset, 10ms delay)")
-        print(f"❌ LOSS at Step 2 → Next asset starts at next cycle")
-        print(f"🔄 Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
-        print(f"🔧 API Health: Consistent timing, channel-specific durations")
-        
-        # Display stop loss and take profit info
-        if self.stop_loss is not None or self.take_profit is not None:
-            print(f"💡 Risk Management:")
-            if self.stop_loss is not None:
-                print(f"   🛑 Stop Loss: ${self.stop_loss:.2f}")
-            if self.take_profit is not None:
-                print(f"   🎯 Take Profit: ${self.take_profit:.2f}")
-        
-        print("Press Ctrl+C to stop")
-        print("=" * 60)
-        
-        strategy = TwoCycleTwoStepMartingaleStrategy(base_amount, multiplier)
-        session_trades = 0
-        
-        try:
-            # Show initial signal overview
-            initial_signals = self.get_signals_from_csv()
-            if initial_signals:
-                print(f"✅ Found {len(initial_signals)} signals in CSV:")
-                current_time = get_user_time()
-                for i, signal in enumerate(initial_signals[:5]):  # Show first 5
-                    time_until = (signal['trade_datetime'] - current_time).total_seconds()
-                    wait_minutes = int(time_until // 60)
-                    wait_seconds = int(time_until % 60)
-                    status = "Ready!" if time_until <= 5 else f"in {wait_minutes}m {wait_seconds}s"
-                    print(f"   {i+1}. {signal['asset']} {signal['direction'].upper()} at {signal['signal_time']} ({status})")
-                if len(initial_signals) > 5:
-                    print(f"   ... and {len(initial_signals) - 5} more signals")
-            else:
-                print(f"❌ No signals found in CSV - add signals to the selected channel CSV file")
-            print("=" * 60)
-            
-            while True:
-                # Get current time
-                current_time = get_user_time()
-                current_time_str = current_time.strftime('%H:%M:%S')
-                
-                # Check for stop loss or take profit
-                should_stop, stop_reason = self.should_stop_trading()
-                if should_stop:
-                    print(f"\n{stop_reason}")
-                    print("🛑 Trading stopped due to risk management limits")
-                    break
-                
-                # Get fresh signals from CSV
-                signals = self.get_signals_from_csv()
-                
-                if not signals:
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    status_line = f"{current_date} | {current_time_hms} | No signals available"
-                    print(f"\r{status_line:<80}", end="", flush=True)
-                    await asyncio.sleep(0.01)  # Check every 10ms
-                    continue
-                
-                # Find next signal
-                for signal in signals:
-                    signal_time_str = signal['signal_datetime'].strftime('%H:%M:%S')
-                    
-                    # Show current time and signal time
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
-                    time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
-                    
-                    # Clear line and show clean status
-                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {signal['asset']} {signal['direction'].upper()}"
-                    print(f"\r{status_line:<80}", end="", flush=True)
-                    
-                    # Execute when times match exactly
-                    if current_time_str == signal_time_str:
-                        print(f"\n🎯 EXECUTING: {signal['asset']} {signal['direction'].upper()} at {signal_time_str}")
-                        
-                        # Execute trade using 2-cycle 2-step strategy
-                        try:
-                            won, profit, action = await self.execute_single_2cycle_2step_trade(
-                                signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
-                            )
-                            
-                            # Update session profit
-                            self.update_session_profit(profit)
-                            session_trades += 1
-                            
-                            # Show result
-                            result_emoji = "✅" if won else "❌"
-                            print(f"{result_emoji} {signal['asset']} {'WIN' if won else 'LOSS'} - ${profit:+.2f}")
-                            
-                            # Handle the action result
-                            if action == 'continue':
-                                # Need to execute next step immediately
-                                print(f"⚡ CONTINUING TO NEXT STEP for {signal['asset']}")
-                                await asyncio.sleep(0.01)  # 10ms delay
-                                
-                                # Execute next step immediately
-                                try:
-                                    won2, profit2, action2 = await self.execute_single_2cycle_2step_trade(
-                                        signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
-                                    )
-                                    
-                                    # Update session profit for step 2
-                                    self.update_session_profit(profit2)
-                                    session_trades += 1
-                                    
-                                    # Show step 2 result
-                                    result_emoji2 = "✅" if won2 else "❌"
-                                    print(f"{result_emoji2} {signal['asset']} STEP 2 {'WIN' if won2 else 'LOSS'} - ${profit2:+.2f}")
-                                    
-                                except Exception as e2:
-                                    print(f"❌ Step 2 Error: {e2}")
-                            
-                        except Exception as e:
-                            print(f"❌ Error: {e}")
-                        
-                        break
-                    
-                    break  # Show only first signal
-                
-                await asyncio.sleep(0.01)  # Check every 10ms
-                
-        except KeyboardInterrupt:
-            print(f"\n\n🛑 2-CYCLE 2-STEP MARTINGALE TRADING STOPPED")
-            print("=" * 60)
-            print(f"📊 SESSION SUMMARY:")
-            print(f"   🎯 Total Signals Processed: {session_trades}")
-            print(f"   💰 Final P&L: ${self.session_profit:+.2f}")
-            
-            # Show final strategy status
-            strategy.show_strategy_status()
-            
-            print("=" * 60)
-            print("👋 Thank you for using the 2-Cycle 2-Step Martingale Trader!")
-
-    async def start_2cycle_3step_trading(self, base_amount: float, multiplier: float = 2.5, is_demo: bool = True):
-        """Start 2-Cycle 3-Step Martingale trading: 2 cycles × 3 steps = up to 6 trades (Step 4 = sum of first 3)"""
-        print(f"\n🚀 2-CYCLE 3-STEP MARTINGALE TRADING STARTED")
-        print("=" * 60)
-        print(f"💰 Base Amount: ${base_amount}")
-        print(f"📈 Multiplier: {multiplier}")
-        print(f"🔄 Cross-Asset 3-Step System: Precise timing with 1-second checks")
-        print(f"⏳ Logic: Wait for exact signal time → Execute → Cross-asset progression")
-        print(f"📅 Date Focus: TODAY ONLY ({get_user_time().strftime('%Y-%m-%d')}) - no future dates")
-        print(f"⏰ Timing: Check every 1 second for signal matches")
-        print(f"✅ WIN at any step → All assets reset to C1S1")
-        print(f"❌ LOSS at Step 1 → Move to Step 2 (same asset, 10ms delay)")
-        print(f"❌ LOSS at Step 2 → Move to Step 3 (same asset, 10ms delay)")
-        print(f"❌ LOSS at Step 3 → Next asset starts at next cycle")
-        print(f"🔄 Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
-        print(f"🔧 Special Logic: Step 4 (C2S1) = Sum of first 3 steps")
-        
-        # Display stop loss and take profit info
-        if self.stop_loss is not None or self.take_profit is not None:
-            print(f"💡 Risk Management:")
-            if self.stop_loss is not None:
-                print(f"   🛑 Stop Loss: ${self.stop_loss:.2f}")
-            if self.take_profit is not None:
-                print(f"   🎯 Take Profit: ${self.take_profit:.2f}")
-        
-        print("Press Ctrl+C to stop")
-        print("=" * 60)
-        
-        strategy = TwoCycleThreeStepMartingaleStrategy(base_amount, multiplier)
-        session_trades = 0
-        
-        try:
-            # Show initial signal overview
-            initial_signals = self.get_signals_from_csv()
-            if initial_signals:
-                print(f"✅ Found {len(initial_signals)} signals in CSV:")
-                current_time = get_user_time()
-                for i, signal in enumerate(initial_signals[:5]):  # Show first 5
-                    time_until = (signal['trade_datetime'] - current_time).total_seconds()
-                    wait_minutes = int(time_until // 60)
-                    wait_seconds = int(time_until % 60)
-                    status = "Ready!" if time_until <= 5 else f"in {wait_minutes}m {wait_seconds}s"
-                    print(f"   {i+1}. {signal['asset']} {signal['direction'].upper()} at {signal['signal_time']} ({status})")
-                if len(initial_signals) > 5:
-                    print(f"   ... and {len(initial_signals) - 5} more signals")
-            else:
-                print(f"❌ No signals found in CSV - add signals to the selected channel CSV file")
-            print("=" * 60)
-            
-            while True:
-                # Get current time
-                current_time = get_user_time()
-                current_time_str = current_time.strftime('%H:%M:%S')
-                
-                # Check for stop loss or take profit
-                should_stop, stop_reason = self.should_stop_trading()
-                if should_stop:
-                    print(f"\n{stop_reason}")
-                    print("🛑 Trading stopped due to risk management limits")
-                    break
-                
-                # Get fresh signals from CSV
-                signals = self.get_signals_from_csv()
-                
-                if not signals:
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    status_line = f"{current_date} | {current_time_hms} | No signals available"
-                    print(f"\r{status_line:<80}", end="", flush=True)
-                    await asyncio.sleep(0.01)  # Check every 10ms
-                    continue
-                
-                # Find next signal
-                for signal in signals:
-                    signal_time_str = signal['signal_datetime'].strftime('%H:%M:%S')
-                    
-                    # Show current time and signal time
-                    current_date = current_time.strftime('%Y-%m-%d')
-                    current_time_hms = current_time.strftime('%H:%M:%S')
-                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
-                    time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
-                    
-                    # Clear line and show clean status
-                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {signal['asset']} {signal['direction'].upper()}"
-                    print(f"\r{status_line:<80}", end="", flush=True)
-                    
-                    # Execute when times match exactly
-                    if current_time_str == signal_time_str:
-                        print(f"\n🎯 EXECUTING: {signal['asset']} {signal['direction'].upper()} at {signal_time_str}")
-                        
-                        # Execute trade using 2-cycle 3-step strategy
-                        try:
-                            won, profit, action = await self.execute_single_2cycle_3step_trade(
-                                signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
-                            )
-                            
-                            # Update session profit
-                            self.update_session_profit(profit)
-                            session_trades += 1
-                            
-                            # Show result
-                            result_emoji = "✅" if won else "❌"
-                            print(f"{result_emoji} {signal['asset']} {'WIN' if won else 'LOSS'} - ${profit:+.2f}")
-                            
-                            # Handle the action result for 3-step progression
-                            if action == 'continue':
-                                # Need to execute next step immediately
-                                current_step = strategy.get_asset_step(signal['asset'])
-                                print(f"⚡ CONTINUING TO STEP {current_step} for {signal['asset']}")
-                                await asyncio.sleep(0.01)  # 10ms delay
-                                
-                                # Execute next step immediately
-                                try:
-                                    won2, profit2, action2 = await self.execute_single_2cycle_3step_trade(
-                                        signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
-                                    )
-                                    
-                                    # Update session profit
-                                    self.update_session_profit(profit2)
-                                    session_trades += 1
-                                    
-                                    # Show result
-                                    result_emoji2 = "✅" if won2 else "❌"
-                                    current_step2 = strategy.get_asset_step(signal['asset']) - 1  # Previous step
-                                    print(f"{result_emoji2} {signal['asset']} STEP {current_step2} {'WIN' if won2 else 'LOSS'} - ${profit2:+.2f}")
-                                    
-                                    # Check if we need to continue to step 3
-                                    if action2 == 'continue':
-                                        print(f"⚡ CONTINUING TO STEP 3 for {signal['asset']}")
-                                        await asyncio.sleep(0.01)  # 10ms delay
-                                        
-                                        try:
-                                            won3, profit3, action3 = await self.execute_single_2cycle_3step_trade(
-                                                signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
-                                            )
-                                            
-                                            # Update session profit
-                                            self.update_session_profit(profit3)
-                                            session_trades += 1
-                                            
-                                            # Show result
-                                            result_emoji3 = "✅" if won3 else "❌"
-                                            print(f"{result_emoji3} {signal['asset']} STEP 3 {'WIN' if won3 else 'LOSS'} - ${profit3:+.2f}")
-                                            
-                                        except Exception as e3:
-                                            print(f"❌ Step 3 Error: {e3}")
-                                    
-                                except Exception as e2:
-                                    print(f"❌ Step 2 Error: {e2}")
-                            
-                        except Exception as e:
-                            print(f"❌ Error: {e}")
-                        
-                        break
-                    
-                    break  # Show only first signal
-                
-                await asyncio.sleep(0.01)  # Check every 10ms
-                
-        except KeyboardInterrupt:
-            print(f"\n\n🛑 2-CYCLE 3-STEP MARTINGALE TRADING STOPPED")
-            print("=" * 60)
-            print(f"📊 SESSION SUMMARY:")
-            print(f"   🎯 Total Signals Processed: {session_trades}")
-            print(f"   💰 Final P&L: ${self.session_profit:+.2f}")
-            
-            # Show final strategy status
-            strategy.show_strategy_status()
-            
-            print("=" * 60)
-            print("👋 Thank you for using the 2-Cycle 3-Step Martingale Trader!")
-
-    async def start_date_specific_trading(self, target_date: str, base_amount: float, strategy_type: str = "3step", multiplier: float = 2.5, is_demo: bool = True):
-        """Start trading for a specific date continuously"""
-        print(f"\n🚀 DATE-SPECIFIC TRADING STARTED")
-        print("=" * 60)
-        print(f"📅 Target Date: {target_date}")
-        print(f"💰 Base Amount: ${base_amount}")
-        print(f"📈 Strategy: {strategy_type}")
-        print(f"🔄 Multiplier: {multiplier}")
-        print(f"🎯 Channel: {self.active_channel}")
-        print(f"⏰ Running continuously for signals on {target_date}")
-        
-        # Display stop loss and take profit info
-        if self.stop_loss is not None or self.take_profit is not None:
-            print(f"💡 Risk Management:")
-            if self.stop_loss is not None:
-                print(f"   🛑 Stop Loss: ${self.stop_loss:.2f}")
-            if self.take_profit is not None:
-                print(f"   🎯 Take Profit: ${self.take_profit:.2f}")
-        
-        print("Press Ctrl+C to stop")
-        print("=" * 60)
-        
-        # Initialize strategy based on type
-        if strategy_type == "2step":
-            strategy = TwoStepMartingaleStrategy(base_amount, multiplier)
-        elif strategy_type == "3step":
-            strategy = ThreeStepMartingaleStrategy(base_amount, multiplier)
-        elif strategy_type == "4cycle":
-            strategy = FourCycleMartingaleStrategy(base_amount, multiplier)
-        elif strategy_type == "5cycle":
-            strategy = FiveCycleMartingaleStrategy(base_amount, multiplier)
-        else:
-            strategy = MultiAssetMartingaleStrategy(base_amount, multiplier)
-        
-        session_trades = 0
-        processed_signals = set()  # Track processed signals to avoid duplicates
-        
-        try:
-            # Show initial signal overview for the target date
-            # Scanning for signals on target date...
-            initial_signals = self.get_signals_from_csv(target_date)
-            if initial_signals:
-                print(f"✅ Found {len(initial_signals)} signals for {target_date}:")
-                for i, signal in enumerate(initial_signals[:10]):  # Show first 10
-                    print(f"   {i+1}. {signal['asset']} {signal['direction'].upper()} at {signal['signal_time']}")
-                if len(initial_signals) > 10:
-                    print(f"   ... and {len(initial_signals) - 10} more signals")
-            else:
-                print(f"❌ No signals found for {target_date} - check CSV file")
-            print("=" * 60)
-            
-            while True:
-                # Check stop loss and take profit conditions
-                should_stop, stop_reason = self.should_stop_trading()
-                if should_stop:
-                    print(f"\n{stop_reason}")
-                    print(f"🏁 Trading session ended")
-                    break
-                
-                # Get signals for the target date
-                signals = self.get_signals_from_csv(target_date)
-                
-                if not signals:
-                    current_time_display = get_user_time().strftime('%H:%M:%S')
-                    print(f"\n🔄 [{current_time_display}] No signals available for {target_date} - waiting...")
-                    await asyncio.sleep(5)  # Check every 5 seconds for date-specific trading
-                    continue
-                
-                # Check for exact time match with signals from target date
-                current_time = get_user_time()
-                current_time_str = current_time.strftime('%H:%M:%S')
-                ready_signals = []
-                
-                print(f"⏰ CURRENT TIME: {current_time_str} | TARGET DATE: {target_date}")
-                
-                for signal in signals:
-                    # Create unique signal ID
-                    signal_id = f"{signal['asset']}_{signal['direction']}_{signal['signal_time']}_{target_date}"
-                    
-                    # Skip if already processed
-                    if signal_id in processed_signals:
-                        continue
-                    
-                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
-                    
-                    # Check for EXACT time match
-                    if current_time_str == signal_time_hms:
-                        print(f"🎯 EXACT TIME MATCH: {signal['asset']} {signal['direction'].upper()} at {signal_time_hms}")
-                        ready_signals.append(signal)
-                        processed_signals.add(signal_id)
-                
-                if not ready_signals:
-                    # Show next upcoming signal
-                    future_signals = []
-                    for signal in signals:
-                        signal_id = f"{signal['asset']}_{signal['direction']}_{signal['signal_time']}_{target_date}"
-                        if signal_id not in processed_signals:
-                            # Calculate time until signal (using current date but signal time)
-                            signal_today = current_time.replace(
-                                hour=signal['signal_datetime'].hour,
-                                minute=signal['signal_datetime'].minute,
-                                second=signal['signal_datetime'].second
-                            )
-                            time_until = (signal_today - current_time).total_seconds()
-                            if time_until > 0:
-                                future_signals.append((signal, time_until))
-                    
-                    if future_signals:
-                        next_signal, next_wait = min(future_signals, key=lambda x: x[1])
-                        wait_minutes = int(next_wait // 60)
-                        wait_seconds = int(next_wait % 60)
-                        print(f"⏰ Next signal: {next_signal['asset']} {next_signal['direction'].upper()} at {next_signal['signal_time']} (in {wait_minutes}m {wait_seconds}s)")
-                    
-                    await asyncio.sleep(1)  # Check every second
-                    continue
-                
-                # Process ready signals
-                if ready_signals:
-                    print(f"\n📊 PROCESSING {len(ready_signals)} SIGNALS FOR {target_date}:")
-                    print("=" * 50)
-                    
-                    for signal in ready_signals:
-                        asset = signal['asset']
-                        direction = signal['direction']
-                        
-                        print(f"📊 {asset} {direction.upper()} - {strategy.get_status(asset) if hasattr(strategy, 'get_status') else 'Ready'}")
-                        print(f"⏰ Signal: {signal['signal_time']} | Date: {target_date}")
-                        
-                        # Execute trade based on strategy type
-                        try:
-                            if strategy_type in ["2step", "3step", "4cycle", "5cycle"]:
-                                # Execute single trade in sequence
-                                if strategy_type == "2step":
-                                    won, profit, action = await self.execute_single_2step_trade(
-                                        asset, direction, base_amount, strategy, signal.get('channel')
-                                    )
-                                elif strategy_type == "3step":
-                                    won, profit, action = await self.execute_single_3step_trade(
-                                        asset, direction, base_amount, strategy, signal.get('channel')
-                                    )
-                                elif strategy_type == "4cycle":
-                                    won, profit, action = await self.execute_single_4cycle_trade(
-                                        asset, direction, base_amount, strategy, signal.get('channel')
-                                    )
-                                elif strategy_type == "5cycle":
-                                    won, profit, action = await self.execute_single_5cycle_trade(
-                                        asset, direction, base_amount, strategy, signal.get('channel')
-                                    )
-                                
-                                # Update session profit
-                                self.update_session_profit(profit)
-                                session_trades += 1
-                                
-                                # Show result
-                                result_emoji = "✅" if won else "❌"
-                                print(f"{result_emoji} {asset} {'WIN' if won else 'LOSS'} - ${profit:+.2f}")
-                                
-                                # Handle continuation if needed
-                                if action == 'continue':
-                                    print(f"⚡ CONTINUING TO NEXT STEP for {asset}")
-                                    await asyncio.sleep(0.01)  # 10ms delay
-                                    
-                                    # Execute next step immediately
-                                    try:
-                                        if strategy_type == "2step":
-                                            won2, profit2, action2 = await self.execute_single_2step_trade(
-                                                asset, direction, base_amount, strategy, signal.get('channel')
-                                            )
-                                        elif strategy_type == "3step":
-                                            won2, profit2, action2 = await self.execute_single_3step_trade(
-                                                asset, direction, base_amount, strategy, signal.get('channel')
-                                            )
-                                        elif strategy_type == "4cycle":
-                                            won2, profit2, action2 = await self.execute_single_4cycle_trade(
-                                                asset, direction, base_amount, strategy, signal.get('channel')
-                                            )
-                                        elif strategy_type == "5cycle":
-                                            won2, profit2, action2 = await self.execute_single_5cycle_trade(
-                                                asset, direction, base_amount, strategy, signal.get('channel')
-                                            )
-                                        
-                                        # Update session profit for next step
-                                        self.update_session_profit(profit2)
-                                        session_trades += 1
-                                        
-                                        # Show next step result
-                                        result_emoji2 = "✅" if won2 else "❌"
-                                        print(f"{result_emoji2} {asset} NEXT STEP {'WIN' if won2 else 'LOSS'} - ${profit2:+.2f}")
-                                        
-                                        # Handle further continuation for 3-step
-                                        if strategy_type == "3step" and action2 == 'continue':
-                                            print(f"⚡ CONTINUING TO STEP 3 for {asset}")
-                                            await asyncio.sleep(0.01)  # 10ms delay
-                                            
-                                            won3, profit3, action3 = await self.execute_single_3step_trade(
-                                                asset, direction, base_amount, strategy, signal.get('channel')
-                                            )
-                                            
-                                            self.update_session_profit(profit3)
-                                            session_trades += 1
-                                            
-                                            result_emoji3 = "✅" if won3 else "❌"
-                                            print(f"{result_emoji3} {asset} STEP 3 {'WIN' if won3 else 'LOSS'} - ${profit3:+.2f}")
-                                        
-                                    except Exception as next_step_error:
-                                        print(f"❌ Next step error: {next_step_error}")
-                            else:
-                                # Execute complete martingale sequence
-                                final_won, total_profit = await self.execute_complete_martingale_sequence(
-                                    asset, direction, base_amount, strategy, signal.get('channel')
-                                )
-                                
-                                # Update session profit
-                                self.update_session_profit(total_profit)
-                                session_trades += 1
-                                
-                                if final_won:
-                                    print(f"🎉 {asset} SEQUENCE WIN! Profit: ${total_profit:+.2f}")
-                                else:
-                                    print(f"💔 {asset} SEQUENCE LOSS! Loss: ${total_profit:+.2f}")
-                            
-                        except Exception as trade_error:
-                            print(f"❌ Trade error for {asset}: {trade_error}")
-                        
-                        # Show session stats
-                        wins = len([t for t in self.trade_history if t['result'] == 'win'])
-                        losses = len([t for t in self.trade_history if t['result'] == 'loss'])
-                        
-                        print(f"\n📊 TRADING SESSION:")
-                        print(f"   💰 {self.get_session_status()}")
-                        print(f"   📈 Total Trades: {session_trades}")
-                        print(f"   🏆 Results: {wins}W/{losses}L")
-                        print(f"   📅 Target Date: {target_date}")
-                        
-                        # Check stop conditions
-                        should_stop, stop_reason = self.should_stop_trading()
-                        if should_stop:
-                            print(f"\n{stop_reason}")
-                            print(f"🏁 Trading session ended")
-                            return
-                
-                await asyncio.sleep(1)  # Check every second
-                
-        except KeyboardInterrupt:
-            print(f"\n🛑 DATE-SPECIFIC TRADING STOPPED")
-        except Exception as e:
-            print(f"❌ Trading error: {e}")
-        
-        # Final stats
-        total_trades = len(self.trade_history)
-        total_wins = len([t for t in self.trade_history if t['result'] == 'win'])
-        total_losses = len([t for t in self.trade_history if t['result'] == 'loss'])
-        
-        print(f"\n📊 FINAL STATISTICS:")
-        print(f"   💰 {self.get_session_status()}")
-        print(f"   📈 Session Trades: {session_trades}")
-        print(f"   🏆 Results: {total_wins}W/{total_losses}L")
-        print(f"   📅 Target Date: {target_date}")
-        
-        # Show final stop loss/take profit status
-        if self.stop_loss is not None or self.take_profit is not None:
-            print(f"\n🎯 RISK MANAGEMENT SUMMARY:")
-            if self.stop_loss is not None:
-                if self.session_profit <= -self.stop_loss:
-                    print(f"   🛑 Stop Loss TRIGGERED: ${self.session_profit:+.2f} (limit: -${self.stop_loss:.2f})")
-                else:
-                    remaining_loss = self.stop_loss + self.session_profit
-                    print(f"   🛑 Stop Loss: ${remaining_loss:.2f} remaining")
-            
-            if self.take_profit is not None:
-                if self.session_profit >= self.take_profit:
-                    print(f"   🎯 Take Profit ACHIEVED: ${self.session_profit:+.2f} (target: +${self.take_profit:.2f})")
-                else:
-                    remaining_profit = self.take_profit - self.session_profit
-                    print(f"   🎯 Take Profit: ${remaining_profit:.2f} to go")
-
 def get_timezone_from_user() -> float:
     """Get timezone offset from user input"""
     print("🌍 TIMEZONE CONFIGURATION")
@@ -5230,8 +4048,6 @@ async def main():
         print("3️⃣  Option 3: 3-Cycle Martingale (Cross-Asset)")
         print("    • 3a) 3-Cycle 2-Step: 3 cycles × 2 steps = up to 6 trades")
         print("    • 3b) 3-Cycle 3-Step: 3 cycles × 3 steps = up to 9 trades")
-        print("    • 3c) 2-Cycle 2-Step: 2 cycles × 2 steps = up to 4 trades")
-        print("    • 3d) 2-Cycle 3-Step: 2 cycles × 3 steps = up to 6 trades (Step 4 = sum of first 3)")
         print("    • LOSS at final step → Next ASSET starts at next cycle")
         print("    • WIN at any step → All assets reset to Cycle 1")
         print("    • Cross-asset cycle progression")
@@ -5243,141 +4059,46 @@ async def main():
         print("    • WIN at any step → All assets reset to Cycle 1")
         print("    • Cross-asset cycle progression (Extended versions)")
         print()
-        print("5️⃣  Option 5: Date-Specific Trading")
-        print("    • Run continuously for signals on a specific date")
-        print("    • Choose any strategy (2-step, 3-step, 4-cycle, 5-cycle)")
-        print("    • Perfect for trading signals from past or future dates")
-        print("    • Matches signal times with current time for execution")
-        print()
         print("0️⃣  Exit")
         print("=" * 40)
         
         try:
-            strategy_choice = input("\n🎯 Select strategy (1, 2, 3, 4, 5, or 0 to exit): ").strip()
+            strategy_choice = input("\n🎯 Select strategy (1, 2, 3, 4, or 0 to exit): ").strip()
             
             if strategy_choice == '0':
                 print("\n👋 Goodbye!")
                 break
             
-            if strategy_choice not in ['1', '2', '3', '4', '5']:
-                print("❌ Please enter 1, 2, 3, 4, 5, or 0")
+            if strategy_choice not in ['1', '2', '3', '4']:
+                print("❌ Please enter 1, 2, 3, 4, or 0")
                 continue
             
-            # Handle Option 5: Date-Specific Trading
-            if strategy_choice == '5':
-                print("\n✅ Selected: Option 5 - Date-Specific Trading")
-                
-                # Get target date
-                print("\n📅 Date Selection:")
-                while True:
-                    try:
-                        date_input = input("Enter target date (YYYY-MM-DD) or press Enter for today: ").strip()
-                        if not date_input:
-                            target_date = get_user_time().strftime('%Y-%m-%d')
-                            print(f"✅ Using today's date: {target_date}")
-                        else:
-                            # Validate date format
-                            datetime.strptime(date_input, '%Y-%m-%d')
-                            target_date = date_input
-                            print(f"✅ Using target date: {target_date}")
-                        break
-                    except ValueError:
-                        print("❌ Invalid date format. Please use YYYY-MM-DD (e.g., 2026-01-31)")
-                
-                # Get strategy type for date-specific trading
-                print("\n📋 Strategy Selection for Date-Specific Trading:")
-                print("1) 2-Step Martingale (2 steps per cycle)")
-                print("2) 3-Step Martingale (3 steps per cycle)")
-                print("3) 4-Cycle 2-Step (4 cycles × 2 steps)")
-                print("4) 5-Cycle 2-Step (5 cycles × 2 steps)")
-                
-                while True:
-                    strategy_sub_choice = input("Select strategy (1, 2, 3, or 4): ").strip()
-                    if strategy_sub_choice == '1':
-                        date_strategy_type = "2step"
-                        print("✅ Selected: 2-Step Martingale for date-specific trading")
-                        break
-                    elif strategy_sub_choice == '2':
-                        date_strategy_type = "3step"
-                        print("✅ Selected: 3-Step Martingale for date-specific trading")
-                        break
-                    elif strategy_sub_choice == '3':
-                        date_strategy_type = "4cycle"
-                        print("✅ Selected: 4-Cycle 2-Step for date-specific trading")
-                        break
-                    elif strategy_sub_choice == '4':
-                        date_strategy_type = "5cycle"
-                        print("✅ Selected: 5-Cycle 2-Step for date-specific trading")
-                        break
-                    else:
-                        print("❌ Please enter 1, 2, 3, or 4")
-                
-                # Set flags for date-specific trading
-                use_date_specific = True
-                use_option2 = False
-                use_option3 = False
-                use_option3b = False
-                use_option3c = False
-                use_option3d = False
-                use_option4 = False
-                use_option5 = False
-                
             # Handle Option 3 sub-options
-            elif strategy_choice == '3':
+            if strategy_choice == '3':
                 print("\n📋 Option 3 Sub-Options:")
                 print("3a) 3-Cycle 2-Step Martingale (up to 6 trades)")
                 print("3b) 3-Cycle 3-Step Martingale (up to 9 trades)")
-                print("3c) 2-Cycle 2-Step Martingale (up to 4 trades)")
-                print("3d) 2-Cycle 3-Step Martingale (up to 6 trades, Step 4 = sum of first 3)")
                 
                 while True:
-                    sub_choice = input("Select sub-option (3a, 3b, 3c, or 3d): ").strip().lower()
+                    sub_choice = input("Select sub-option (3a or 3b): ").strip().lower()
                     if sub_choice == '3a':
                         print("\n✅ Selected: Option 3a - 3-Cycle 2-Step Martingale")
-                        use_date_specific = False
                         use_option2 = False
                         use_option3 = True
                         use_option3b = False
-                        use_option3c = False
-                        use_option3d = False
                         use_option4 = False
                         use_option5 = False
                         break
                     elif sub_choice == '3b':
                         print("\n✅ Selected: Option 3b - 3-Cycle 3-Step Martingale")
-                        use_date_specific = False
                         use_option2 = False
                         use_option3 = False
                         use_option3b = True
-                        use_option3c = False
-                        use_option3d = False
-                        use_option4 = False
-                        use_option5 = False
-                        break
-                    elif sub_choice == '3c':
-                        print("\n✅ Selected: Option 3c - 2-Cycle 2-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = False
-                        use_option3b = False
-                        use_option3c = True
-                        use_option3d = False
-                        use_option4 = False
-                        use_option5 = False
-                        break
-                    elif sub_choice == '3d':
-                        print("\n✅ Selected: Option 3d - 2-Cycle 3-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = False
-                        use_option3b = False
-                        use_option3c = False
-                        use_option3d = True
                         use_option4 = False
                         use_option5 = False
                         break
                     else:
-                        print("❌ Please enter 3a, 3b, 3c, or 3d")
+                        print("❌ Please enter 3a or 3b")
             # Handle Option 4 sub-options
             elif strategy_choice == '4':
                 print("\n📋 Option 4 Sub-Options:")
@@ -5388,23 +4109,17 @@ async def main():
                     sub_choice = input("Select sub-option (4a or 4b): ").strip().lower()
                     if sub_choice == '4a':
                         print("\n✅ Selected: Option 4a - 4-Cycle 2-Step Martingale")
-                        use_date_specific = False
                         use_option2 = False
                         use_option3 = False
                         use_option3b = False
-                        use_option3c = False
-                        use_option3d = False
                         use_option4 = True
                         use_option5 = False
                         break
                     elif sub_choice == '4b':
                         print("\n✅ Selected: Option 4b - 5-Cycle 2-Step Martingale")
-                        use_date_specific = False
                         use_option2 = False
                         use_option3 = False
                         use_option3b = False
-                        use_option3c = False
-                        use_option3d = False
                         use_option4 = False
                         use_option5 = True
                         break
@@ -5414,22 +4129,16 @@ async def main():
                 # Show selected strategy
                 if strategy_choice == '1':
                     print("\n✅ Selected: Option 1 - 3-Step Martingale")
-                    use_date_specific = False
                     use_option2 = False
                     use_option3 = False
                     use_option3b = False
-                    use_option3c = False
-                    use_option3d = False
                     use_option4 = False
                     use_option5 = False
                 elif strategy_choice == '2':
                     print("\n✅ Selected: Option 2 - 3-Cycle Progressive Martingale")
-                    use_date_specific = False
                     use_option2 = True
                     use_option3 = False
                     use_option3b = False
-                    use_option3c = False
-                    use_option3d = False
                     use_option4 = False
                     use_option5 = False
             
@@ -5439,19 +4148,18 @@ async def main():
             # Get channel selection
             print("1. Channel Selection:")
             print("   Available channels:")
-            print("   1) James Martin VIP (5:00 trades)")
+            print("   1) James Martin VIP (1:00 trades)")
             print("   2) LC Trader (5:00 trades)")
             print("   3) PO ADVANCE BOT (1:00 trades)")
             print("   4) Logic 5 Cycle (1:00 trades)")
             print("   5) Pocket Option Sign (1:00 trades)")
-            print("   6) Trade x po (1:00 trades)")
             
             while True:
                 try:
-                    channel_choice = input("   Select channel (1, 2, 3, 4, 5, or 6): ").strip()
+                    channel_choice = input("   Select channel (1, 2, 3, 4, or 5): ").strip()
                     if channel_choice == '1':
                         active_channel = "james_martin"
-                        channel_display = "James Martin VIP (5:00 trades)"
+                        channel_display = "James Martin VIP (1:00 trades)"
                         break
                     elif channel_choice == '2':
                         active_channel = "lc_trader"
@@ -5469,14 +4177,10 @@ async def main():
                         active_channel = "pocket_option_sign"
                         channel_display = "Pocket Option Sign (1:00 trades)"
                         break
-                    elif channel_choice == '6':
-                        active_channel = "new_channel_7"
-                        channel_display = "Trade x po (1:00 trades)"
-                        break
                     else:
-                        print("   ❌ Please enter 1, 2, 3, 4, 5, or 6")
+                        print("   ❌ Please enter 1, 2, 3, 4, or 5")
                 except ValueError:
-                    print("   ❌ Please enter 1, 2, 3, 4, 5, or 6")
+                    print("   ❌ Please enter 1, 2, 3, 4, or 5")
             
             print(f"   ✅ Selected: {channel_display}")
             
@@ -5656,43 +4360,6 @@ async def main():
                 print(f"   • LOSS at Step 2 → Move to Step 3 (same asset)")
                 print(f"   • LOSS at Step 3 → NEXT asset starts at next cycle")
                 print(f"   • Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
-            elif use_option3c:
-                # Option 3c: 2-Cycle 2-Step Martingale (Cross-Asset)
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c2s1 = c1s2 * multiplier
-                c2s2 = c2s1 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (2-Cycle 2-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f}")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
-            elif use_option3d:
-                # Option 3d: 2-Cycle 3-Step Martingale (Cross-Asset) - Step 4 = sum of first 3
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c1s3 = c1s2 * multiplier
-                # Step 4 (C2S1) = sum of first 3 steps
-                c2s1 = c1s1 + c1s2 + c1s3
-                c2s2 = c2s1 * multiplier
-                c2s3 = c2s2 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (2-Cycle 3-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f} → Step 3 ${c1s3:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f} → Step 3 ${c2s3:.2f}")
-                print(f"   Special Logic: Step 4 (C2S1) = Sum of first 3 steps (${c2s1:.2f})")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → Move to Step 3 (same asset)")
-                print(f"   • LOSS at Step 3 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
             elif use_option3:
                 # Option 3a: 3-Cycle 2-Step Martingale (Cross-Asset)
                 c1s1 = base_amount
@@ -5779,10 +4446,7 @@ async def main():
             
             try:
                 # Start trading based on strategy
-                if use_date_specific:
-                    # Option 5: Date-Specific Trading
-                    await trader.start_date_specific_trading(target_date, base_amount, date_strategy_type, multiplier, is_demo)
-                elif use_option5:
+                if use_option5:
                     # Option 4b: 5-Cycle 2-Step Martingale
                     await trader.start_5cycle_trading(base_amount, multiplier, is_demo)
                 elif use_option4:
@@ -5791,12 +4455,6 @@ async def main():
                 elif use_option3b:
                     # Option 3b: 3-Cycle 3-Step Martingale
                     await trader.start_3step_trading(base_amount, multiplier, is_demo)
-                elif use_option3c:
-                    # Option 3c: 2-Cycle 2-Step Martingale
-                    await trader.start_2cycle_2step_trading(base_amount, multiplier, is_demo)
-                elif use_option3d:
-                    # Option 3d: 2-Cycle 3-Step Martingale
-                    await trader.start_2cycle_3step_trading(base_amount, multiplier, is_demo)
                 elif use_option3:
                     # Option 3a: 3-Cycle 2-Step Martingale
                     await trader.start_2step_trading(base_amount, multiplier, is_demo)

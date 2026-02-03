@@ -142,6 +142,7 @@ class AsyncPocketOptionClient:
         self._websocket.add_event_handler("stream_update", self._on_stream_update)
         self._websocket.add_event_handler("candles_received", self._on_candles_received)
         self._websocket.add_event_handler("disconnected", self._on_disconnected)
+        self._websocket.add_event_handler("server_time", self._on_server_time)
 
     async def connect(
         self, regions: Optional[List[str]] = None, persistent: Optional[bool] = None
@@ -608,6 +609,108 @@ class AsyncPocketOptionClient:
             except ValueError:
                 pass
 
+    async def get_server_time(self) -> ServerTime:
+        """
+        Get current server time from Pocket Option
+
+        Returns:
+            ServerTime: Server time synchronization object with current server timestamp
+        
+        Raises:
+            ConnectionError: If not connected to PocketOption
+            PocketOptionError: If server time request fails
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected to PocketOption")
+
+        try:
+            # Request server time from PocketOption
+            await self._request_server_time()
+            
+            # Wait for server time response
+            await asyncio.sleep(1)
+            
+            # Return current server time
+            if self._server_time:
+                return self._server_time
+            else:
+                # Fallback: create server time with current timestamp
+                current_time = datetime.now().timestamp()
+                self._server_time = ServerTime(
+                    server_timestamp=current_time,
+                    local_timestamp=current_time,
+                    offset=0.0
+                )
+                return self._server_time
+                
+        except Exception as e:
+            logger.error(f"Failed to get server time: {e}")
+            raise PocketOptionError(f"Failed to get server time: {e}")
+
+    async def sync_server_time(self) -> bool:
+        """
+        Synchronize with server time and calculate offset
+
+        Returns:
+            bool: True if synchronization was successful
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected to PocketOption")
+
+        try:
+            # Record local time before request
+            local_before = datetime.now().timestamp()
+            
+            # Request server time
+            await self._request_server_time()
+            
+            # Wait for response
+            await asyncio.sleep(0.5)
+            
+            # Record local time after response
+            local_after = datetime.now().timestamp()
+            
+            # Calculate network delay
+            network_delay = (local_after - local_before) / 2
+            
+            # If we received server time, calculate offset
+            if self._server_time and self._server_time.server_timestamp != self._server_time.local_timestamp:
+                # Server time is different from local time - we got real server time
+                adjusted_server_time = self._server_time.server_timestamp + network_delay
+                offset = adjusted_server_time - local_after
+                
+                # Update server time with calculated offset
+                self._server_time = ServerTime(
+                    server_timestamp=adjusted_server_time,
+                    local_timestamp=local_after,
+                    offset=offset
+                )
+                
+                logger.info(f"Server time synchronized - Offset: {offset:.3f}s")
+                return True
+            else:
+                logger.warning("Server time synchronization failed - using local time")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Server time synchronization failed: {e}")
+            return False
+
+    def get_adjusted_time(self) -> datetime:
+        """
+        Get current time adjusted for server offset
+
+        Returns:
+            datetime: Current time adjusted to match server time
+        """
+        if self._server_time and self._server_time.offset != 0:
+            # Apply server offset to local time
+            adjusted_timestamp = datetime.now().timestamp() + self._server_time.offset
+            return datetime.fromtimestamp(adjusted_timestamp)
+        else:
+            # No offset available, return local time
+            return datetime.now()
+
     @property
     def is_connected(self) -> bool:
         """Check if client is connected (including persistent connections)"""
@@ -807,12 +910,52 @@ class AsyncPocketOptionClient:
 
     async def _setup_time_sync(self) -> None:
         """Setup server time synchronization"""
-        # This would typically involve getting server timestamp
-        # For now, create a basic time sync object
-        local_time = datetime.now().timestamp()
-        self._server_time = ServerTime(
-            server_timestamp=local_time, local_timestamp=local_time, offset=0.0
-        )
+        try:
+            # Try to get actual server time
+            await self._request_server_time()
+            
+            # Wait for server response
+            await asyncio.sleep(1)
+            
+            # If no server time received, use local time as fallback
+            if not self._server_time:
+                local_time = datetime.now().timestamp()
+                self._server_time = ServerTime(
+                    server_timestamp=local_time, 
+                    local_timestamp=local_time, 
+                    offset=0.0
+                )
+                logger.info("Using local time as server time fallback")
+            else:
+                logger.info("Server time synchronization completed")
+                
+        except Exception as e:
+            logger.warning(f"Server time sync failed, using local time: {e}")
+            local_time = datetime.now().timestamp()
+            self._server_time = ServerTime(
+                server_timestamp=local_time, 
+                local_timestamp=local_time, 
+                offset=0.0
+            )
+
+    async def _request_server_time(self) -> None:
+        """Request server time from PocketOption"""
+        try:
+            # Send server time request message
+            # This follows PocketOption's WebSocket protocol for time sync
+            message = '42["getServerTime"]'
+            
+            # Use appropriate connection method
+            if self._is_persistent and self._keep_alive_manager:
+                await self._keep_alive_manager.send_message(message)
+            else:
+                await self._websocket.send_message(message)
+                
+            logger.debug("Server time request sent")
+            
+        except Exception as e:
+            logger.error(f"Failed to request server time: {e}")
+            raise
 
     def _validate_order_parameters(
         self, asset: str, amount: float, direction: OrderDirection, duration: int
@@ -1293,6 +1436,40 @@ class AsyncPocketOptionClient:
         if self.enable_logging:
             logger.warning("Disconnected from PocketOption")
         await self._emit_event("disconnected", data)
+
+    async def _on_server_time(self, data: Dict[str, Any]) -> None:
+        """Handle server time response"""
+        try:
+            if "serverTime" in data or "timestamp" in data:
+                # Extract server timestamp
+                server_timestamp = data.get("serverTime") or data.get("timestamp")
+                local_timestamp = datetime.now().timestamp()
+                
+                if server_timestamp:
+                    # Convert to float if needed
+                    if isinstance(server_timestamp, str):
+                        server_timestamp = float(server_timestamp)
+                    elif isinstance(server_timestamp, int):
+                        server_timestamp = float(server_timestamp)
+                    
+                    # Calculate offset
+                    offset = server_timestamp - local_timestamp
+                    
+                    # Update server time
+                    self._server_time = ServerTime(
+                        server_timestamp=server_timestamp,
+                        local_timestamp=local_timestamp,
+                        offset=offset
+                    )
+                    
+                    if self.enable_logging:
+                        logger.info(f"Server time received: {datetime.fromtimestamp(server_timestamp)} (offset: {offset:.3f}s)")
+                    
+                    await self._emit_event("server_time_updated", self._server_time)
+                    
+        except Exception as e:
+            if self.enable_logging:
+                logger.error(f"Failed to process server time: {e}")
 
     async def _handle_candles_stream(self, data: Dict[str, Any]) -> None:
         """Handle candle data from stream updates (changeSymbol responses)"""
