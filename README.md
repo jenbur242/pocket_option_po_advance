@@ -1,0 +1,1 @@
+# pocket_option_full_bot
