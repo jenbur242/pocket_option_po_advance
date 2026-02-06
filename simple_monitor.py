@@ -67,9 +67,15 @@ class SimpleMonitor:
             #      'entity': None,
             #      'last_msg_id': None
             #  },
+            # {
+            #    'id': 'https://t.me/+Wc1-m-ShMdRkOTg1',  # NEW CHANNEL
+            #     'name': 'Trade x po',
+            #     'entity': None,
+            #     'last_msg_id': None
+            # }
              {
-                'id': 'https://t.me/+Wc1-m-ShMdRkOTg1',  # NEW CHANNEL
-                 'name': 'Trade x po',
+                'id': 'https://t.me/+3FlQlhKisy5kOTcx',  # NEW CHANNEL
+                 'name': 'James martin free channel',
                  'entity': None,
                  'last_msg_id': None
              }
@@ -87,7 +93,8 @@ class SimpleMonitor:
             'logic 5 cycle': 'pocketoption_logic_5_cycle.csv',
             'pocket option sign': 'pocketoption_pocket_option_sign.csv',
             'pocket pro ai': 'pocketoption_pocket_pro_ai.csv',
-            'trade x po': 'pocketoption_new_channel_7.csv'  # lowercase key to match channel_name.lower()
+            'trade x po': 'pocketoption_new_channel_7.csv',  # lowercase key to match channel_name.lower()
+            'new channel': 'pocketoption_new_channel.csv'  # New channel mapping
         }
         
         # Set fixed CSV filenames for each channel
@@ -110,6 +117,11 @@ class SimpleMonitor:
         
         # Set initial date
         self.current_date = datetime.now().strftime('%Y-%m-%d')
+        
+        # Clean old data on startup
+        print(f"\n🧹 STARTUP: Cleaning old data from CSV files...")
+        print(f"   Current Date: {self.current_date}")
+        self.clean_old_data_on_startup()
         
         self.current_channel = 0
         self.running = False
@@ -229,8 +241,154 @@ class SimpleMonitor:
             except Exception as e:
                 print(f"⚠️ Error fixing CSV file {csv_file}: {e}")
     
+    def clean_old_data_on_startup(self):
+        """Clean all old date data from CSV files on startup, keeping only current date"""
+        headers = [
+            'date', 'timestamp', 'channel', 'message_id', 'message_text', 
+            'is_signal', 'asset', 'direction', 'signal_time'
+        ]
+        
+        print("-" * 60)
+        
+        for channel_name, csv_file in self.csv_files.items():
+            try:
+                if not os.path.exists(csv_file):
+                    print(f"   ℹ️ {csv_file}: File doesn't exist yet")
+                    continue
+                
+                # Read all data from CSV
+                rows_to_keep = []
+                old_rows_count = 0
+                total_rows = 0
+                old_dates = set()
+                
+                with open(csv_file, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    
+                    # Read header
+                    header_row = next(reader, None)
+                    
+                    # Process data rows
+                    for row in reader:
+                        total_rows += 1
+                        if len(row) >= 1:  # Check if row has date column
+                            row_date = row[0]
+                            if row_date == self.current_date:
+                                # Keep only current date rows
+                                rows_to_keep.append(row)
+                            else:
+                                # Count old date rows
+                                old_rows_count += 1
+                                old_dates.add(row_date)
+                
+                # Rewrite CSV file with headers and only current date data
+                with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)  # Write headers
+                    writer.writerows(rows_to_keep)  # Write current date data only
+                
+                if old_rows_count > 0:
+                    print(f"   🗑️ {csv_file}:")
+                    print(f"      Old dates found: {', '.join(sorted(old_dates))}")
+                    print(f"      Deleted: {old_rows_count} old rows")
+                    print(f"      Kept: {len(rows_to_keep)} current date rows ({self.current_date})")
+                elif total_rows > 0:
+                    print(f"   ✅ {csv_file}: All {len(rows_to_keep)} rows are current date ({self.current_date})")
+                else:
+                    print(f"   ℹ️ {csv_file}: Empty file")
+                    
+            except Exception as e:
+                print(f"   ⚠️ Error cleaning {csv_file}: {e}")
+        
+        print("-" * 60)
+        print(f"✅ Startup cleanup completed - All CSV files now contain only {self.current_date} data\n")
+    
     def clean_previous_date_data(self, old_date):
         """Clean all rows with previous date from CSV files and keep only current date data with headers"""
+        headers = [
+            'date', 'timestamp', 'channel', 'message_id', 'message_text', 
+            'is_signal', 'asset', 'direction', 'signal_time'
+        ]
+        
+        print(f"\n🧹 CLEANING PREVIOUS DATE DATA:")
+        print(f"   Old Date: {old_date}")
+        print(f"   New Date: {self.current_date}")
+        print("-" * 60)
+        
+        for channel_name, csv_file in self.csv_files.items():
+            try:
+                if not os.path.exists(csv_file):
+                    print(f"   ℹ️ {csv_file}: File doesn't exist yet")
+                    continue
+                
+                # Read all data from CSV
+                rows_to_keep = []
+                previous_date_rows_count = 0
+                total_rows = 0
+                
+                with open(csv_file, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    
+                    # Read header
+                    header_row = next(reader, None)
+                    
+                    # Process data rows
+                    for row in reader:
+                        total_rows += 1
+                        if len(row) >= 1:  # Check if row has date column
+                            row_date = row[0]
+                            if row_date == self.current_date:
+                                # Keep only current date rows
+                                rows_to_keep.append(row)
+                            else:
+                                # Count all non-current date rows for reporting
+                                previous_date_rows_count += 1
+                
+                # Rewrite CSV file with headers and only current date data
+                with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)  # Write headers
+                    writer.writerows(rows_to_keep)  # Write current date data only
+                
+                if previous_date_rows_count > 0:
+                    print(f"   🗑️ {csv_file}:")
+                    print(f"      Deleted: {previous_date_rows_count} old rows")
+                    print(f"      Kept: {len(rows_to_keep)} current date rows")
+                elif total_rows > 0:
+                    print(f"   ✅ {csv_file}: All {len(rows_to_keep)} rows are current date")
+                else:
+                    print(f"   ℹ️ {csv_file}: Empty file")
+                    
+            except Exception as e:
+                print(f"   ⚠️ Error cleaning {csv_file}: {e}")
+        
+        print("-" * 60)
+        print(f"✅ Date cleanup completed - All CSV files now contain only {self.current_date} data")
+        print()
+    
+    def check_date_change(self):
+        """Check if date has changed and CLEAR ALL DATA to start fresh with new date"""
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        
+        if self.current_date != current_date:
+            old_date = self.current_date
+            self.current_date = current_date
+            
+            if old_date:
+                print(f"\n{'='*60}")
+                print(f"📅 DATE CHANGED: {old_date} → {current_date}")
+                print(f"{'='*60}")
+                print(f"🗑️ CLEARING ALL OLD DATA - Starting fresh with {current_date}")
+                self.clear_all_csv_data()
+                print(f"✅ All CSV files cleared and ready for {current_date} data")
+                print(f"✅ Only NEW messages from {current_date} will be saved")
+                print(f"{'='*60}\n")
+            
+            return True  # Date changed
+        return False  # No date change
+    
+    def clear_all_csv_data(self):
+        """Clear all data from CSV files, keeping only headers"""
         headers = [
             'date', 'timestamp', 'channel', 'message_id', 'message_text', 
             'is_signal', 'asset', 'direction', 'signal_time'
@@ -241,59 +399,25 @@ class SimpleMonitor:
                 if not os.path.exists(csv_file):
                     continue
                 
-                # Read all data from CSV
-                rows_to_keep = []
-                previous_date_rows_count = 0
-                
+                # Count rows before clearing
+                row_count = 0
                 with open(csv_file, 'r', newline='', encoding='utf-8') as f:
                     reader = csv.reader(f)
-                    
-                    # Read header
-                    header_row = next(reader, None)
-                    
-                    # Process data rows
-                    for row in reader:
-                        if len(row) >= 1:  # Check if row has date column
-                            row_date = row[0]
-                            if row_date == self.current_date:
-                                # Keep only current date rows
-                                rows_to_keep.append(row)
-                            elif row_date == old_date:
-                                # Count previous date rows for reporting
-                                previous_date_rows_count += 1
+                    next(reader, None)  # Skip header
+                    row_count = sum(1 for row in reader)
                 
-                # Rewrite CSV file with headers and only current date data
+                # Rewrite with only headers
                 with open(csv_file, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
-                    writer.writerow(headers)  # Write headers
-                    writer.writerows(rows_to_keep)  # Write current date data only
+                    writer.writerow(headers)
                 
-                if previous_date_rows_count > 0:
-                    print(f"   🗑️ Cleaned {previous_date_rows_count} previous date rows from {csv_file}")
-                    print(f"   ✅ Kept {len(rows_to_keep)} current date rows in {csv_file}")
+                if row_count > 0:
+                    print(f"   🗑️ {csv_file}: Deleted {row_count} rows")
                 else:
-                    print(f"   ℹ️ No previous date data found in {csv_file}")
+                    print(f"   ✅ {csv_file}: Already empty")
                     
             except Exception as e:
-                print(f"   ⚠️ Error cleaning {csv_file}: {e}")
-    
-    def check_date_change(self):
-        """Check if date has changed and clean previous date data if needed"""
-        current_date = datetime.now().strftime('%Y-%m-%d')
-        
-        if self.current_date != current_date:
-            old_date = self.current_date
-            self.current_date = current_date
-            
-            if old_date:
-                print(f"\n📅 DATE CHANGED: {old_date} → {current_date}")
-                print(f"🧹 Cleaning previous date data from CSV files...")
-                self.clean_previous_date_data(old_date)
-                print(f"✅ All new data will be saved with date: {current_date}")
-                print("-" * 60)
-            
-            return True  # Date changed
-        return False  # No date change
+                print(f"   ⚠️ Error clearing {csv_file}: {e}")
     
     def ensure_csv_headers(self):
         """Ensure CSV files exist with proper headers for each channel"""
@@ -346,26 +470,43 @@ class SimpleMonitor:
                 print(f"✅ Created CSV file with headers for {channel_name}: {csv_file}")
     
     async def fetch_last_message_pattern(self, channel):
-        """Fetch the last 10 messages from channel to learn pattern and save all to CSV"""
+        """Fetch the last 10 messages from TODAY ONLY to learn pattern and save all to CSV"""
         if not channel['entity']:
             return None
         
         try:
-            # Get the last 10 messages to analyze patterns
-            messages = await self.telegram_client.get_messages(channel['entity'], limit=10)
+            # Get the last 50 messages to find today's messages
+            messages = await self.telegram_client.get_messages(channel['entity'], limit=50)
             
             if not messages:
                 print(f"   📭 No messages found in {channel['name']}")
                 return None
             
-            print(f"\n🔍 ANALYZING & SAVING LAST 10 MESSAGES for {channel['name']}:")
+            # Filter messages to only TODAY
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            today_messages = []
+            
+            for msg in messages:
+                if msg.date:
+                    msg_date = msg.date.strftime('%Y-%m-%d')
+                    if msg_date == current_date:
+                        today_messages.append(msg)
+            
+            if not today_messages:
+                print(f"   📭 No messages from TODAY ({current_date}) found in {channel['name']}")
+                return None
+            
+            # Limit to last 10 messages from today
+            today_messages = today_messages[:10]
+            
+            print(f"\n🔍 ANALYZING & SAVING LAST {len(today_messages)} MESSAGES FROM TODAY ({current_date}) for {channel['name']}:")
             print("-" * 60)
             
             patterns_found = []
             messages_saved = 0
             
             # Process messages in reverse order (oldest first) for better CSV chronology
-            for i, msg in enumerate(reversed(messages)):
+            for i, msg in enumerate(reversed(today_messages)):
                 if msg.text:
                     print(f"📨 Message {i+1} (ID: {msg.id}):")
                     print(f"   📝 Text: {msg.text[:200]}...")
@@ -402,6 +543,7 @@ class SimpleMonitor:
                     print()
             
             print(f"📊 SUMMARY for {channel['name']}:")
+            print(f"   📅 Date: {current_date} (TODAY ONLY)")
             print(f"   🎯 Signals found: {len(patterns_found)}")
             print(f"   💾 Messages saved to CSV: {messages_saved}")
             if patterns_found:
@@ -1291,7 +1433,7 @@ class SimpleMonitor:
             return False
     
     async def check_channel(self, channel):
-        """Check one channel for new messages"""
+        """Check one channel for new messages - ONLY from current date"""
         if not channel['entity']:
             return
         
@@ -1301,10 +1443,20 @@ class SimpleMonitor:
             
             new_messages_found = False
             
+            # Get current date for filtering
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            
             for msg in messages:
                 # Skip if we've already seen this message
                 if channel['last_msg_id'] and msg.id <= channel['last_msg_id']:
                     continue
+                
+                # FILTER: Only process messages from TODAY
+                if msg.date:
+                    msg_date = msg.date.strftime('%Y-%m-%d')
+                    if msg_date != current_date:
+                        # Skip messages not from today
+                        continue
                 
                 new_messages_found = True
                 self.messages_processed += 1
@@ -1489,7 +1641,7 @@ class SimpleMonitor:
                 print(f"❌ {channel['name']}: Failed to reconnect - {e}")
     
     async def start_monitoring(self):
-        """Start real-time signal monitoring"""
+        """Start real-time signal monitoring - ONLY TODAY'S MESSAGES"""
         print("🚀 REAL-TIME SIGNAL MONITOR STARTING...")
         print(f"📄 CSV Files: Separate file for each channel with date column")
         for channel_name, csv_file in self.csv_files.items():
@@ -1497,16 +1649,18 @@ class SimpleMonitor:
         print("📡 Channels:")
         for channel in self.channels:
             if isinstance(channel['id'], str):
-                print(f"   � {channel['name']}: {channel['id']}")
+                print(f"   📺 {channel['name']}: {channel['id']}")
             else:
-                print(f"   � {channel['name']}: ID {channel['id']}")
+                print(f"   📺 {channel['name']}: ID {channel['id']}")
         print("⚡ Monitoring: ALL channels every 2 seconds (parallel)")
         print("🎯 Detection: Trading signals + Results")
         print("📊 Format: [time] NEW MESSAGE details")
         print("🚀 Real-time: Instant notifications for new signals")
         print("📡 Method: Parallel channel checking for faster detection")
         print("🚨 Alerts: Real-time signal notifications")
-        print(f"📅 Current Date: {self.current_date} (auto-updates on date change)")
+        print(f"📅 Current Date: {self.current_date}")
+        print(f"🔍 Filter: ONLY messages from TODAY ({self.current_date}) will be saved")
+        print(f"🗑️ Auto-cleanup: When date changes, ALL old data is deleted")
         print("-" * 60)
         
         # Initialize with authentication handling

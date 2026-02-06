@@ -448,6 +448,7 @@ class TwoCycleThreeStepMartingaleStrategy:
         self.multiplier = multiplier
         self.max_cycles = 2
         self.max_steps_per_cycle = 3
+        self.max_steps = 6  # Total max steps (2 cycles × 3 steps)
         
         # Global cycle state - applies to ALL assets
         self.global_cycle = 1
@@ -516,14 +517,16 @@ class TwoCycleThreeStepMartingaleStrategy:
         cycle = strategy['cycle']
         step = strategy['step']
         
+        print(f"🔍 DEBUG: get_current_amount for {asset} - C{cycle}S{step}")
+        
         # Calculate amount based on cycle and step
         if cycle == 1:
             if step == 1:
-                return self.base_amount  # C1S1: $1.00
+                amount = self.base_amount  # C1S1: $1.00
             elif step == 2:
-                return self.base_amount * self.multiplier  # C1S2: $1.00 × 2.5 = $2.50
+                amount = self.base_amount * self.multiplier  # C1S2: $1.00 × 2.5 = $2.50
             else:  # step == 3
-                return self.base_amount * (self.multiplier ** 2)  # C1S3: $1.00 × 2.5² = $6.25
+                amount = self.base_amount * (self.multiplier ** 2)  # C1S3: $1.00 × 2.5² = $6.25
         elif cycle == 2:
             # Special logic: C2S1 = sum of first 3 steps
             c1s1 = self.base_amount
@@ -532,13 +535,16 @@ class TwoCycleThreeStepMartingaleStrategy:
             c2s1 = c1s1 + c1s2 + c1s3  # Sum of first 3 steps
             
             if step == 1:
-                return c2s1  # C2S1: sum of first 3 steps
+                amount = c2s1  # C2S1: sum of first 3 steps
             elif step == 2:
-                return c2s1 * self.multiplier  # C2S2: C2S1 × multiplier
+                amount = c2s1 * self.multiplier  # C2S2: C2S1 × multiplier
             else:  # step == 3
-                return c2s1 * (self.multiplier ** 2)  # C2S3: C2S1 × multiplier²
+                amount = c2s1 * (self.multiplier ** 2)  # C2S3: C2S1 × multiplier²
         else:
-            return self.base_amount
+            amount = self.base_amount
+            
+        print(f"🔍 DEBUG: {asset} C{cycle}S{step} → ${amount:.2f}")
+        return amount
     
     def record_result(self, won: bool, asset: str, trade_amount: float) -> Dict[str, Any]:
         """Record trade result and return next action with cross-asset cycle progression"""
@@ -1612,21 +1618,11 @@ class MultiAssetPreciseTrader:
         
         # Channel selection and trade duration settings (simplified)
         self.active_channel = None  # Will be set by user
-        self.james_martin_duration = 300  # 5:00 for James Martin
-        self.lc_trader_duration = 300   # 5:00 for LC Trader
-        self.po_advance_bot_duration = 60  # 1:00 for PO ADVANCE BOT
-        self.logic_5_cycle_duration = 60  # 1:00 for Logic 5 Cycle
-        self.pocket_option_sign_duration = 60  # 1:00 for Pocket Option Sign
-        self.new_channel_7_duration = 60  # 1:00 for Trade x po
+        self.james_martin_free_duration = 300  # 5:00 for James Martin Free Channel
         
-        # Use date-based CSV filename - support all channels
+        # Use date-based CSV filename - support new channel only
         # Will be auto-updated to find latest available CSV
-        self.james_martin_csv = None
-        self.lc_trader_csv = None
-        self.po_advance_bot_csv = None
-        self.logic_5_cycle_csv = None
-        self.pocket_option_sign_csv = None
-        self.new_channel_7_csv = None
+        self.james_martin_free_csv = None
         self.current_csv_date = None
         self._update_csv_filenames(show_info=True)
         
@@ -1664,12 +1660,8 @@ class MultiAssetPreciseTrader:
             'USDVND'     # Vietnamese Dong - limited availability
         }
         
-        print(f"📊 James Martin CSV: {self.james_martin_csv}")
-        print(f"📊 LC Trader CSV: {self.lc_trader_csv}")
-        print(f"📊 PO ADVANCE BOT CSV: {self.po_advance_bot_csv}")
-        print(f"📊 Logic 5 Cycle CSV: {self.logic_5_cycle_csv}")
-        print(f"📊 Pocket Option Sign CSV: {self.pocket_option_sign_csv}")
-        print(f"⏰ Trade Durations: James Martin (5:00) | LC Trader (5:00) | PO ADVANCE BOT (1:00) | Logic 5 Cycle (1:00) | Pocket Option Sign (1:00)")
+        print(f"📊 James Martin Free Channel CSV: {self.james_martin_free_csv}")
+        print(f"⏰ Trade Duration: James Martin Free Channel (5:00)")
         print(f"🎯 Active Channel: {self.active_channel or 'Not selected'}")
         print(f"⏱️  Execution: Exactly at signal time + 10ms")
         
@@ -1686,38 +1678,18 @@ class MultiAssetPreciseTrader:
     
     
     def _update_csv_filenames(self, show_info: bool = False):
-        """Set fixed CSV filenames for each channel (no date-based naming)"""
-        # Use FIXED CSV filenames that match simple_monitor.py exactly
-        self.james_martin_csv = "pocketoption_james_martin_vip_channel_m1.csv"
-        self.lc_trader_csv = "pocketoption_lc_trader.csv"
-        self.po_advance_bot_csv = "pocketoption_po_advance_bot.csv"
-        self.logic_5_cycle_csv = "pocketoption_logic_5_cycle.csv"
-        self.pocket_option_sign_csv = "pocketoption_pocket_option_sign.csv"
-        self.new_channel_7_csv = "pocketoption_new_channel_7.csv"
+        """Set fixed CSV filenames for the new channel (no date-based naming)"""
+        # Use FIXED CSV filename that matches simple_monitor.py exactly
+        self.james_martin_free_csv = "pocketoption_james_martin_free_channel.csv"
         
         # Only show detailed info when requested (during initialization)
         if show_info:
             # Show only the selected channel's CSV file, not all channels
             if self.active_channel:
                 # Get the selected channel's CSV file and details
-                if self.active_channel == "james_martin":
-                    selected_csv = self.james_martin_csv
-                    selected_name = "James Martin VIP"
-                elif self.active_channel == "lc_trader":
-                    selected_csv = self.lc_trader_csv
-                    selected_name = "LC Trader"
-                elif self.active_channel == "po_advance_bot":
-                    selected_csv = self.po_advance_bot_csv
-                    selected_name = "PO ADVANCE BOT"
-                elif self.active_channel == "logic_5_cycle":
-                    selected_csv = self.logic_5_cycle_csv
-                    selected_name = "Logic 5 Cycle"
-                elif self.active_channel == "pocket_option_sign":
-                    selected_csv = self.pocket_option_sign_csv
-                    selected_name = "Pocket Option Sign"
-                elif self.active_channel == "new_channel_7":
-                    selected_csv = self.new_channel_7_csv
-                    selected_name = "Trade x po"
+                if self.active_channel == "james_martin_free":
+                    selected_csv = self.james_martin_free_csv
+                    selected_name = "James Martin Free Channel"
                 else:
                     selected_csv = None
                     selected_name = "Unknown"
@@ -1743,20 +1715,10 @@ class MultiAssetPreciseTrader:
     
     def get_channel_duration(self, channel: str) -> int:
         """Get duration in seconds for specific channel"""
-        if channel == "james_martin":
-            return self.james_martin_duration
-        elif channel == "lc_trader":
-            return self.lc_trader_duration
-        elif channel == "po_advance_bot":
-            return self.po_advance_bot_duration
-        elif channel == "logic_5_cycle":
-            return self.logic_5_cycle_duration
-        elif channel == "pocket_option_sign":
-            return self.pocket_option_sign_duration
-        elif channel == "new_channel_7":
-            return self.new_channel_7_duration
+        if channel == "james_martin_free":
+            return self.james_martin_free_duration
         else:
-            return 60  # Default fallback
+            return 300  # Default fallback (5:00)
     
     def should_use_api(self, asset: str) -> bool:
         """Check if API is available and connected"""
@@ -1863,30 +1825,10 @@ class MultiAssetPreciseTrader:
             self._update_csv_filenames()
             
             # Determine which CSV file to use based on active channel
-            if self.active_channel == "james_martin":
-                csv_file = self.james_martin_csv
-                trade_duration = self.james_martin_duration
-                channel_name = "James Martin VIP"
-            elif self.active_channel == "lc_trader":
-                csv_file = self.lc_trader_csv
-                trade_duration = self.lc_trader_duration
-                channel_name = "LC Trader"
-            elif self.active_channel == "po_advance_bot":
-                csv_file = self.po_advance_bot_csv
-                trade_duration = self.po_advance_bot_duration
-                channel_name = "PO ADVANCE BOT"
-            elif self.active_channel == "logic_5_cycle":
-                csv_file = self.logic_5_cycle_csv
-                trade_duration = self.logic_5_cycle_duration
-                channel_name = "Logic 5 Cycle"
-            elif self.active_channel == "pocket_option_sign":
-                csv_file = self.pocket_option_sign_csv
-                trade_duration = self.pocket_option_sign_duration
-                channel_name = "Pocket Option Sign"
-            elif self.active_channel == "new_channel_7":
-                csv_file = self.new_channel_7_csv
-                trade_duration = self.new_channel_7_duration
-                channel_name = "Trade x po"
+            if self.active_channel == "james_martin_free":
+                csv_file = self.james_martin_free_csv
+                trade_duration = self.james_martin_free_duration
+                channel_name = "James Martin Free Channel"
             else:
                 return []
             
@@ -2481,24 +2423,12 @@ class MultiAssetPreciseTrader:
             target_close_time = execution_time + timedelta(seconds=dynamic_duration)
             
             # Determine channel name for display
-            if channel == "james_martin":
-                channel_name = "James Martin"
-            elif channel == "lc_trader":
-                channel_name = "LC Trader"
-            elif channel == "po_advance_bot":
-                channel_name = "PO ADVANCE BOT"
-            elif channel == "logic_5_cycle":
-                channel_name = "Logic 5 Cycle"
+            if channel == "james_martin_free":
+                channel_name = "James Martin Free"
             else:
                 # Use active channel if not specified
-                if self.active_channel == "james_martin":
-                    channel_name = "James Martin"
-                elif self.active_channel == "lc_trader":
-                    channel_name = "LC Trader"
-                elif self.active_channel == "po_advance_bot":
-                    channel_name = "PO ADVANCE BOT"
-                elif self.active_channel == "logic_5_cycle":
-                    channel_name = "Logic 5 Cycle"
+                if self.active_channel == "james_martin_free":
+                    channel_name = "James Martin Free"
                 else:
                     channel_name = "Default"
             
@@ -2614,23 +2544,11 @@ class MultiAssetPreciseTrader:
             channel = signal.get('channel', self.active_channel)
             
             # Get channel-specific duration
-            if channel == "james_martin":
-                dynamic_duration = self.james_martin_duration
-                channel_name = "James Martin"
-            elif channel == "lc_trader":
-                dynamic_duration = self.lc_trader_duration
-                channel_name = "LC Trader"
-            elif channel == "po_advance_bot":
-                dynamic_duration = self.po_advance_bot_duration
-                channel_name = "PO ADVANCE BOT"
-            elif channel == "logic_5_cycle":
-                dynamic_duration = self.logic_5_cycle_duration
-                channel_name = "Logic 5 Cycle"
-            elif channel == "new_channel_7":
-                dynamic_duration = self.new_channel_7_duration
-                channel_name = "Trade x po"
+            if channel == "james_martin_free":
+                dynamic_duration = self.james_martin_free_duration
+                channel_name = "James Martin Free"
             else:
-                dynamic_duration = signal.get('duration', 60)  # Use signal duration or default to 1:00
+                dynamic_duration = signal.get('duration', 300)  # Use signal duration or default to 5:00
                 channel_name = "Default"
             
             duration_display = f"{dynamic_duration}s" if dynamic_duration < 60 else f"{dynamic_duration//60}:{dynamic_duration%60:02d}"
@@ -2826,15 +2744,27 @@ class MultiAssetPreciseTrader:
     async def execute_martingale_sequence(self, asset: str, direction: str, base_amount: float, strategy, channel: str = None) -> Tuple[bool, float]:
         """Execute complete martingale sequence for an asset"""
         total_profit = 0.0
-        current_step = strategy.get_asset_step(asset)
         
-        while current_step <= strategy.max_steps:
+        # Get max steps based on strategy type
+        if hasattr(strategy, 'max_steps'):
+            max_steps = strategy.max_steps
+        else:
+            max_steps = 6  # Default fallback
+        
+        step_count = 0  # Track actual steps executed
+        
+        while step_count < max_steps:
+            # Get current step and amount from strategy (this will reflect any resets)
+            current_step = strategy.get_asset_step(asset)
+            current_cycle = strategy.get_asset_cycle(asset)
             step_amount = strategy.get_current_amount(asset)
+            
+            print(f"🔍 DEBUG: {asset} executing C{current_cycle}S{current_step} with ${step_amount:.2f}")
             
             try:
                 # Execute trade based on step
-                if current_step == 1:
-                    # For Step 1, use precise timing
+                if current_step == 1 and step_count == 0:
+                    # For first Step 1, use precise timing
                     won, profit = await self.execute_precise_trade({
                         'asset': asset,
                         'direction': direction,
@@ -2845,38 +2775,47 @@ class MultiAssetPreciseTrader:
                         'duration': 60
                     }, step_amount)
                 else:
-                    # For Steps 2 and 3, execute immediately
+                    # For all other steps, execute immediately
                     won, profit = await self.execute_immediate_trade(asset, direction, step_amount, channel or self.active_channel)
                 
                 total_profit += profit
+                step_count += 1
                 
                 # Record result and get next action
                 next_action = strategy.record_result(won, asset, step_amount)
                 
+                print(f"🔍 DEBUG: {asset} result: {'WIN' if won else 'LOSS'}, action: {next_action['action']}")
+                
                 if won:
+                    print(f"✅ {asset} WIN! Strategy reset. Sequence complete.")
                     return True, total_profit
                 else:
                     if next_action['action'] == 'continue':
-                        current_step = next_action['next_step']
+                        print(f"🔄 {asset} continuing to next step...")
                         await asyncio.sleep(0.01)  # 10ms delay between steps
-                    elif next_action['action'] in ['reset', 'reset_after_max_loss']:
+                        continue
+                    elif next_action['action'] in ['reset', 'reset_after_max_loss', 'asset_completed']:
+                        print(f"🔄 {asset} sequence complete: {next_action['action']}")
                         return False, total_profit
                     else:
+                        print(f"🔄 {asset} unknown action: {next_action['action']}")
                         return False, total_profit
                         
             except Exception as e:
                 print(f"❌ Step {current_step} error for {asset}: {e}")
                 next_action = strategy.record_result(False, asset, step_amount)
                 total_profit -= step_amount
+                step_count += 1
                 
                 if next_action['action'] == 'continue':
-                    current_step = next_action['next_step']
                     await asyncio.sleep(0.01)
-                elif next_action['action'] in ['reset', 'reset_after_max_loss']:
+                    continue
+                elif next_action['action'] in ['reset', 'reset_after_max_loss', 'asset_completed']:
                     return False, total_profit
                 else:
                     return False, total_profit
         
+        print(f"🔄 {asset} reached max steps ({max_steps})")
         return False, total_profit
 
     async def start_simple_trading(self, base_amount: float, multiplier: float = 2.5, is_demo: bool = True):
@@ -5215,223 +5154,37 @@ async def main():
     while True:
         print("\n📋 TRADING STRATEGY MENU:")
         print("=" * 40)
-        print("1️⃣  Option 1: 3-Step Martingale")
-        print("    • Step 1, 2, 3 progression")
-        print("    • WIN at any step → Reset to Step 1")
-        print("    • LOSS → Continue to next step")
-        print("    • All 3 steps lost → Reset to Step 1")
-        print()
-        print("2️⃣  Option 2: 3-Cycle Progressive Martingale")
-        print("    • 3 cycles × 3 steps each = up to 9 total trades")
-        print("    • Cycle 1: 3-step martingale")
-        print("    • Cycle 2: Continues from Cycle 1's last amount")
-        print("    • Cycle 3: Same amounts as Cycle 2 (capped risk)")
-        print()
-        print("3️⃣  Option 3: 3-Cycle Martingale (Cross-Asset)")
-        print("    • 3a) 3-Cycle 2-Step: 3 cycles × 2 steps = up to 6 trades")
-        print("    • 3b) 3-Cycle 3-Step: 3 cycles × 3 steps = up to 9 trades")
-        print("    • 3c) 2-Cycle 2-Step: 2 cycles × 2 steps = up to 4 trades")
-        print("    • 3d) 2-Cycle 3-Step: 2 cycles × 3 steps = up to 6 trades (Step 4 = sum of first 3)")
+        print("1️⃣  Option 1: 2-Cycle 3-Step Martingale")
+        print("    • 2 cycles × 3 steps = up to 6 trades")
+        print("    • Step 4 (C2S1) = sum of first 3 steps")
         print("    • LOSS at final step → Next ASSET starts at next cycle")
         print("    • WIN at any step → All assets reset to Cycle 1")
         print("    • Cross-asset cycle progression")
-        print()
-        print("4️⃣  Option 4: 4-Cycle & 5-Cycle 2-Step Martingale (Cross-Asset)")
-        print("    • 4a) 4-Cycle: 4 cycles × 2 steps = up to 8 trades")
-        print("    • 4b) 5-Cycle: 5 cycles × 2 steps = up to 10 trades")
-        print("    • LOSS at Step 2 → Next ASSET starts at next cycle")
-        print("    • WIN at any step → All assets reset to Cycle 1")
-        print("    • Cross-asset cycle progression (Extended versions)")
-        print()
-        print("5️⃣  Option 5: Date-Specific Trading")
-        print("    • Run continuously for signals on a specific date")
-        print("    • Choose any strategy (2-step, 3-step, 4-cycle, 5-cycle)")
-        print("    • Perfect for trading signals from past or future dates")
-        print("    • Matches signal times with current time for execution")
         print()
         print("0️⃣  Exit")
         print("=" * 40)
         
         try:
-            strategy_choice = input("\n🎯 Select strategy (1, 2, 3, 4, 5, or 0 to exit): ").strip()
+            strategy_choice = input("\n🎯 Select strategy (1 or 0 to exit): ").strip()
             
             if strategy_choice == '0':
                 print("\n👋 Goodbye!")
                 break
             
-            if strategy_choice not in ['1', '2', '3', '4', '5']:
-                print("❌ Please enter 1, 2, 3, 4, 5, or 0")
+            if strategy_choice != '1':
+                print("❌ Please enter 1 or 0")
                 continue
             
-            # Handle Option 5: Date-Specific Trading
-            if strategy_choice == '5':
-                print("\n✅ Selected: Option 5 - Date-Specific Trading")
-                
-                # Get target date
-                print("\n📅 Date Selection:")
-                while True:
-                    try:
-                        date_input = input("Enter target date (YYYY-MM-DD) or press Enter for today: ").strip()
-                        if not date_input:
-                            target_date = get_user_time().strftime('%Y-%m-%d')
-                            print(f"✅ Using today's date: {target_date}")
-                        else:
-                            # Validate date format
-                            datetime.strptime(date_input, '%Y-%m-%d')
-                            target_date = date_input
-                            print(f"✅ Using target date: {target_date}")
-                        break
-                    except ValueError:
-                        print("❌ Invalid date format. Please use YYYY-MM-DD (e.g., 2026-01-31)")
-                
-                # Get strategy type for date-specific trading
-                print("\n📋 Strategy Selection for Date-Specific Trading:")
-                print("1) 2-Step Martingale (2 steps per cycle)")
-                print("2) 3-Step Martingale (3 steps per cycle)")
-                print("3) 4-Cycle 2-Step (4 cycles × 2 steps)")
-                print("4) 5-Cycle 2-Step (5 cycles × 2 steps)")
-                
-                while True:
-                    strategy_sub_choice = input("Select strategy (1, 2, 3, or 4): ").strip()
-                    if strategy_sub_choice == '1':
-                        date_strategy_type = "2step"
-                        print("✅ Selected: 2-Step Martingale for date-specific trading")
-                        break
-                    elif strategy_sub_choice == '2':
-                        date_strategy_type = "3step"
-                        print("✅ Selected: 3-Step Martingale for date-specific trading")
-                        break
-                    elif strategy_sub_choice == '3':
-                        date_strategy_type = "4cycle"
-                        print("✅ Selected: 4-Cycle 2-Step for date-specific trading")
-                        break
-                    elif strategy_sub_choice == '4':
-                        date_strategy_type = "5cycle"
-                        print("✅ Selected: 5-Cycle 2-Step for date-specific trading")
-                        break
-                    else:
-                        print("❌ Please enter 1, 2, 3, or 4")
-                
-                # Set flags for date-specific trading
-                use_date_specific = True
-                use_option2 = False
-                use_option3 = False
-                use_option3b = False
-                use_option3c = False
-                use_option3d = False
-                use_option4 = False
-                use_option5 = False
-                
-            # Handle Option 3 sub-options
-            elif strategy_choice == '3':
-                print("\n📋 Option 3 Sub-Options:")
-                print("3a) 3-Cycle 2-Step Martingale (up to 6 trades)")
-                print("3b) 3-Cycle 3-Step Martingale (up to 9 trades)")
-                print("3c) 2-Cycle 2-Step Martingale (up to 4 trades)")
-                print("3d) 2-Cycle 3-Step Martingale (up to 6 trades, Step 4 = sum of first 3)")
-                
-                while True:
-                    sub_choice = input("Select sub-option (3a, 3b, 3c, or 3d): ").strip().lower()
-                    if sub_choice == '3a':
-                        print("\n✅ Selected: Option 3a - 3-Cycle 2-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = True
-                        use_option3b = False
-                        use_option3c = False
-                        use_option3d = False
-                        use_option4 = False
-                        use_option5 = False
-                        break
-                    elif sub_choice == '3b':
-                        print("\n✅ Selected: Option 3b - 3-Cycle 3-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = False
-                        use_option3b = True
-                        use_option3c = False
-                        use_option3d = False
-                        use_option4 = False
-                        use_option5 = False
-                        break
-                    elif sub_choice == '3c':
-                        print("\n✅ Selected: Option 3c - 2-Cycle 2-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = False
-                        use_option3b = False
-                        use_option3c = True
-                        use_option3d = False
-                        use_option4 = False
-                        use_option5 = False
-                        break
-                    elif sub_choice == '3d':
-                        print("\n✅ Selected: Option 3d - 2-Cycle 3-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = False
-                        use_option3b = False
-                        use_option3c = False
-                        use_option3d = True
-                        use_option4 = False
-                        use_option5 = False
-                        break
-                    else:
-                        print("❌ Please enter 3a, 3b, 3c, or 3d")
-            # Handle Option 4 sub-options
-            elif strategy_choice == '4':
-                print("\n📋 Option 4 Sub-Options:")
-                print("4a) 4-Cycle 2-Step Martingale (up to 8 trades)")
-                print("4b) 5-Cycle 2-Step Martingale (up to 10 trades)")
-                
-                while True:
-                    sub_choice = input("Select sub-option (4a or 4b): ").strip().lower()
-                    if sub_choice == '4a':
-                        print("\n✅ Selected: Option 4a - 4-Cycle 2-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = False
-                        use_option3b = False
-                        use_option3c = False
-                        use_option3d = False
-                        use_option4 = True
-                        use_option5 = False
-                        break
-                    elif sub_choice == '4b':
-                        print("\n✅ Selected: Option 4b - 5-Cycle 2-Step Martingale")
-                        use_date_specific = False
-                        use_option2 = False
-                        use_option3 = False
-                        use_option3b = False
-                        use_option3c = False
-                        use_option3d = False
-                        use_option4 = False
-                        use_option5 = True
-                        break
-                    else:
-                        print("❌ Please enter 4a or 4b")
-            else:
-                # Show selected strategy
-                if strategy_choice == '1':
-                    print("\n✅ Selected: Option 1 - 3-Step Martingale")
-                    use_date_specific = False
-                    use_option2 = False
-                    use_option3 = False
-                    use_option3b = False
-                    use_option3c = False
-                    use_option3d = False
-                    use_option4 = False
-                    use_option5 = False
-                elif strategy_choice == '2':
-                    print("\n✅ Selected: Option 2 - 3-Cycle Progressive Martingale")
-                    use_date_specific = False
-                    use_option2 = True
-                    use_option3 = False
-                    use_option3b = False
-                    use_option3c = False
-                    use_option3d = False
-                    use_option4 = False
-                    use_option5 = False
+            # Option 1: 2-Cycle 3-Step Martingale (formerly 3d)
+            print("\n✅ Selected: Option 1 - 2-Cycle 3-Step Martingale")
+            use_date_specific = False
+            use_option2 = False
+            use_option3 = False
+            use_option3b = False
+            use_option3c = False
+            use_option3d = True
+            use_option4 = False
+            use_option5 = False
             
             print("\n📋 TRADING SETUP:")
             print("=" * 40)
@@ -5439,44 +5192,19 @@ async def main():
             # Get channel selection
             print("1. Channel Selection:")
             print("   Available channels:")
-            print("   1) James Martin VIP (5:00 trades)")
-            print("   2) LC Trader (5:00 trades)")
-            print("   3) PO ADVANCE BOT (1:00 trades)")
-            print("   4) Logic 5 Cycle (1:00 trades)")
-            print("   5) Pocket Option Sign (1:00 trades)")
-            print("   6) Trade x po (1:00 trades)")
+            print("   1) James Martin Free Channel (5:00 trades)")
             
             while True:
                 try:
-                    channel_choice = input("   Select channel (1, 2, 3, 4, 5, or 6): ").strip()
+                    channel_choice = input("   Select channel (1): ").strip()
                     if channel_choice == '1':
-                        active_channel = "james_martin"
-                        channel_display = "James Martin VIP (5:00 trades)"
-                        break
-                    elif channel_choice == '2':
-                        active_channel = "lc_trader"
-                        channel_display = "LC Trader (5:00 trades)"
-                        break
-                    elif channel_choice == '3':
-                        active_channel = "po_advance_bot"
-                        channel_display = "PO ADVANCE BOT (1:00 trades)"
-                        break
-                    elif channel_choice == '4':
-                        active_channel = "logic_5_cycle"
-                        channel_display = "Logic 5 Cycle (1:00 trades)"
-                        break
-                    elif channel_choice == '5':
-                        active_channel = "pocket_option_sign"
-                        channel_display = "Pocket Option Sign (1:00 trades)"
-                        break
-                    elif channel_choice == '6':
-                        active_channel = "new_channel_7"
-                        channel_display = "Trade x po (1:00 trades)"
+                        active_channel = "james_martin_free"
+                        channel_display = "James Martin Free Channel (5:00 trades)"
                         break
                     else:
-                        print("   ❌ Please enter 1, 2, 3, 4, 5, or 6")
+                        print("   ❌ Please enter 1")
                 except ValueError:
-                    print("   ❌ Please enter 1, 2, 3, 4, 5, or 6")
+                    print("   ❌ Please enter 1")
             
             print(f"   ✅ Selected: {channel_display}")
             
@@ -5564,195 +5292,36 @@ async def main():
             print(f"\n⏰ TIMING EXAMPLE ({channel_display}):")
             example_signal = "00:38:00"
             
-            if active_channel == "james_martin":
-                duration_text = "1:00 duration"
-            elif active_channel == "po_advance_bot":
-                duration_text = "1:00 duration"
-            elif active_channel == "logic_5_cycle":
-                duration_text = "1:00 duration"
-            else:  # lc_trader
+            if active_channel == "james_martin_free":
+                duration_text = "5:00 duration"
+            else:
                 duration_text = "5:00 duration"
             
             print(f"   Signal Time: {example_signal}:000 (exact second)")
             print(f"   Execute: Within 0-10ms of {example_signal}:000")
             print(f"   Duration: {duration_text}")
             
-            # Show strategy preview
-            if use_option5:
-                # Option 4b: 5-Cycle 2-Step Martingale (Cross-Asset)
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c2s1 = c1s2 * multiplier
-                c2s2 = c2s1 * multiplier
-                c3s1 = c2s2 * multiplier
-                c3s2 = c3s1 * multiplier
-                c4s1 = c3s2 * multiplier
-                c4s2 = c4s1 * multiplier
-                c5s1 = c4s2 * multiplier
-                c5s2 = c5s1 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (5-Cycle 2-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f}")
-                print(f"   Cycle 3: Step 1 ${c3s1:.2f} → Step 2 ${c3s2:.2f}")
-                print(f"   Cycle 4: Step 1 ${c4s1:.2f} → Step 2 ${c4s2:.2f}")
-                print(f"   Cycle 5: Step 1 ${c5s1:.2f} → Step 2 ${c5s2:.2f}")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
-                print(f"   • Extended to 5 cycles for maximum recovery opportunities")
-            elif use_option4:
-                # Option 4a: 4-Cycle 2-Step Martingale (Cross-Asset)
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c2s1 = c1s2 * multiplier
-                c2s2 = c2s1 * multiplier
-                c3s1 = c2s2 * multiplier
-                c3s2 = c3s1 * multiplier
-                c4s1 = c3s2 * multiplier
-                c4s2 = c4s1 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (4-Cycle 2-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f}")
-                print(f"   Cycle 3: Step 1 ${c3s1:.2f} → Step 2 ${c3s2:.2f}")
-                print(f"   Cycle 4: Step 1 ${c4s1:.2f} → Step 2 ${c4s2:.2f}")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
-                print(f"   • Extended to 4 cycles for more recovery opportunities")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
-                print(f"   • Extended to 4 cycles for more recovery opportunities")
-            elif use_option3b:
-                # Option 3b: 3-Cycle 3-Step Martingale (Cross-Asset)
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c1s3 = c1s2 * multiplier
-                c2s1 = c1s3 * multiplier
-                c2s2 = c2s1 * multiplier
-                c2s3 = c2s2 * multiplier
-                c3s1 = c2s3 * multiplier
-                c3s2 = c3s1 * multiplier
-                c3s3 = c3s2 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (3-Cycle 3-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f} → Step 3 ${c1s3:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f} → Step 3 ${c2s3:.2f}")
-                print(f"   Cycle 3: Step 1 ${c3s1:.2f} → Step 2 ${c3s2:.2f} → Step 3 ${c3s3:.2f}")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → Move to Step 3 (same asset)")
-                print(f"   • LOSS at Step 3 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
-            elif use_option3c:
-                # Option 3c: 2-Cycle 2-Step Martingale (Cross-Asset)
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c2s1 = c1s2 * multiplier
-                c2s2 = c2s1 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (2-Cycle 2-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f}")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
-            elif use_option3d:
-                # Option 3d: 2-Cycle 3-Step Martingale (Cross-Asset) - Step 4 = sum of first 3
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c1s3 = c1s2 * multiplier
-                # Step 4 (C2S1) = sum of first 3 steps
-                c2s1 = c1s1 + c1s2 + c1s3
-                c2s2 = c2s1 * multiplier
-                c2s3 = c2s2 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (2-Cycle 3-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f} → Step 3 ${c1s3:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f} → Step 3 ${c2s3:.2f}")
-                print(f"   Special Logic: Step 4 (C2S1) = Sum of first 3 steps (${c2s1:.2f})")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → Move to Step 3 (same asset)")
-                print(f"   • LOSS at Step 3 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
-            elif use_option3:
-                # Option 3a: 3-Cycle 2-Step Martingale (Cross-Asset)
-                c1s1 = base_amount
-                c1s2 = c1s1 * multiplier
-                c2s1 = c1s2 * multiplier
-                c2s2 = c2s1 * multiplier
-                c3s1 = c2s2 * multiplier
-                c3s2 = c3s1 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (3-Cycle 2-Step Cross-Asset Martingale - {channel_display}):")
-                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f}")
-                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f}")
-                print(f"   Cycle 3: Step 1 ${c3s1:.2f} → Step 2 ${c3s2:.2f}")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Cross-Asset Cycle Logic:")
-                print(f"   • WIN at any step → All assets reset to C1S1")
-                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-                print(f"   • LOSS at Step 2 → NEXT asset starts at next cycle")
-                print(f"   • Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
-            elif use_option2:
-                # Option 2: 3-Cycle Progressive Martingale
-                step1_amount = base_amount
-                step2_amount = step1_amount * multiplier
-                step3_amount = step2_amount * multiplier
-                cycle1_last = step3_amount
-                cycle2_step1 = cycle1_last * multiplier
-                cycle2_step2 = cycle2_step1 * multiplier
-                cycle2_step3 = cycle2_step2 * multiplier
-                
-                print(f"\n📊 STRATEGY PREVIEW (3-Cycle Progressive Martingale - {channel_display}):")
-                print(f"   Cycle 1:")
-                print(f"     Step 1: ${step1_amount:.2f} (Base)")
-                print(f"     Step 2: ${step2_amount:.2f}")
-                print(f"     Step 3: ${step3_amount:.2f}")
-                print(f"   Cycle 2 (Continues from Cycle 1):")
-                print(f"     Step 1: ${cycle2_step1:.2f}")
-                print(f"     Step 2: ${cycle2_step2:.2f}")
-                print(f"     Step 3: ${cycle2_step3:.2f}")
-                print(f"   Cycle 3: Same as Cycle 2 (Capped Risk)")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Progressive Martingale Logic:")
-                print(f"   • WIN at any step → Reset to Cycle 1, Step 1")
-                print(f"   • LOSS → Continue to next step")
-                print(f"   • Cycle 2 continues from Cycle 1's last amount")
-                print(f"   • Cycle 3 uses same amounts as Cycle 2")
-            else:
-                # Option 1: 3-Step Martingale
-                step1_amount = base_amount
-                step2_amount = step1_amount * multiplier
-                step3_amount = step2_amount * multiplier
-                print(f"\n📊 STRATEGY PREVIEW (3-Step Martingale - {channel_display}):")
-                print(f"   Step 1: ${step1_amount:.2f} (Base)")
-                print(f"   Step 2: ${step2_amount:.2f} (${step1_amount:.2f} × {multiplier})")
-                print(f"   Step 3: ${step3_amount:.2f} (${step2_amount:.2f} × {multiplier})")
-                print(f"   Total Risk: ${step1_amount + step2_amount + step3_amount:.2f}")
-                print(f"   Trade Duration: {duration_text}")
-                print(f"\n🔄 Martingale Logic:")
-                print(f"   • WIN at any step → Reset to Step 1")
-                print(f"   • LOSS → Continue to next step")
-                print(f"   • All 3 steps lost → Reset to Step 1")
+            
+            # Show strategy preview - Option 1: 2-Cycle 3-Step Martingale (formerly 3d)
+            c1s1 = base_amount
+            c1s2 = c1s1 * multiplier
+            c1s3 = c1s2 * multiplier
+            # Step 4 (C2S1) = sum of first 3 steps
+            c2s1 = c1s1 + c1s2 + c1s3
+            c2s2 = c2s1 * multiplier
+            c2s3 = c2s2 * multiplier
+            
+            print(f"\n📊 STRATEGY PREVIEW (2-Cycle 3-Step Cross-Asset Martingale - {channel_display}):")
+            print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f} → Step 3 ${c1s3:.2f}")
+            print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f} → Step 3 ${c2s3:.2f}")
+            print(f"   Special Logic: Step 4 (C2S1) = Sum of first 3 steps (${c2s1:.2f})")
+            print(f"   Trade Duration: {duration_text}")
+            print(f"\n🔄 Cross-Asset Cycle Logic:")
+            print(f"   • WIN at any step → All assets reset to C1S1")
+            print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
+            print(f"   • LOSS at Step 2 → Move to Step 3 (same asset)")
+            print(f"   • LOSS at Step 3 → NEXT asset starts at next cycle")
+            print(f"   • Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
             
             # Show risk management summary
             if stop_loss is not None or take_profit is not None:
@@ -5778,34 +5347,8 @@ async def main():
                 continue
             
             try:
-                # Start trading based on strategy
-                if use_date_specific:
-                    # Option 5: Date-Specific Trading
-                    await trader.start_date_specific_trading(target_date, base_amount, date_strategy_type, multiplier, is_demo)
-                elif use_option5:
-                    # Option 4b: 5-Cycle 2-Step Martingale
-                    await trader.start_5cycle_trading(base_amount, multiplier, is_demo)
-                elif use_option4:
-                    # Option 4a: 4-Cycle 2-Step Martingale
-                    await trader.start_4cycle_trading(base_amount, multiplier, is_demo)
-                elif use_option3b:
-                    # Option 3b: 3-Cycle 3-Step Martingale
-                    await trader.start_3step_trading(base_amount, multiplier, is_demo)
-                elif use_option3c:
-                    # Option 3c: 2-Cycle 2-Step Martingale
-                    await trader.start_2cycle_2step_trading(base_amount, multiplier, is_demo)
-                elif use_option3d:
-                    # Option 3d: 2-Cycle 3-Step Martingale
-                    await trader.start_2cycle_3step_trading(base_amount, multiplier, is_demo)
-                elif use_option3:
-                    # Option 3a: 3-Cycle 2-Step Martingale
-                    await trader.start_2step_trading(base_amount, multiplier, is_demo)
-                elif use_option2:
-                    # Option 2: 3-Cycle Progressive Martingale
-                    await trader.start_option2_trading(base_amount, multiplier, is_demo)
-                else:
-                    # Option 1: 3-Step Martingale with simple output
-                    await trader.start_simple_trading(base_amount, multiplier, is_demo)
+                # Start trading with Option 1: 2-Cycle 3-Step Martingale (formerly 3d)
+                await trader.start_2cycle_3step_trading(base_amount, multiplier, is_demo)
             finally:
                 # Disconnect
                 if trader.client:
