@@ -475,8 +475,8 @@ class SimpleMonitor:
             return None
         
         try:
-            # Get the last 50 messages to find today's messages
-            messages = await self.telegram_client.get_messages(channel['entity'], limit=50)
+            # Get ALL messages to find today's messages
+            messages = await self.telegram_client.get_messages(channel['entity'])
             
             if not messages:
                 print(f"   📭 No messages found in {channel['name']}")
@@ -496,10 +496,7 @@ class SimpleMonitor:
                 print(f"   📭 No messages from TODAY ({current_date}) found in {channel['name']}")
                 return None
             
-            # Limit to last 10 messages from today
-            today_messages = today_messages[:10]
-            
-            print(f"\n🔍 ANALYZING & SAVING LAST {len(today_messages)} MESSAGES FROM TODAY ({current_date}) for {channel['name']}:")
+            print(f"\n🔍 ANALYZING & SAVING ALL {len(today_messages)} MESSAGES FROM TODAY ({current_date}) for {channel['name']}:")
             print("-" * 60)
             
             patterns_found = []
@@ -689,13 +686,13 @@ class SimpleMonitor:
                     
                     channel['entity'] = entity
                     
-                    # Get the latest message ID to start from
-                    messages = await self.telegram_client.get_messages(entity, limit=1)
-                    if messages:
-                        channel['last_msg_id'] = messages[0].id
+                    # DON'T set last_msg_id on startup - process all messages from today
+                    # This ensures we don't miss any messages if monitor restarts
+                    channel['last_msg_id'] = None
                     
                     channel_title = getattr(entity, 'title', channel['name'])
                     print(f"✅ {channel['name']}: Connected to '{channel_title}'")
+                    print(f"🔄 Will process ALL messages from today (no last_msg_id set)")
                     
                     # Analyze message patterns from this channel (last 10 messages)
                     await self.fetch_last_message_pattern(channel)
@@ -1438,25 +1435,29 @@ class SimpleMonitor:
             return
         
         try:
-            # Get latest messages (check more messages for better detection)
-            messages = await self.telegram_client.get_messages(channel['entity'], limit=10)
+            # Get ALL messages from today (no limit)
+            messages = await self.telegram_client.get_messages(channel['entity'])
             
             new_messages_found = False
             
-            # Get current date for filtering
-            current_date = datetime.now().strftime('%Y-%m-%d')
+            # Get current date using device local time
+            current_date_local = datetime.now().strftime('%Y-%m-%d')
+            
+            print(f"🔍 DEBUG: Checking {channel['name']} - Current date (device): {current_date_local}")
             
             for msg in messages:
+                # FILTER: Only process messages from TODAY (convert msg.date to local time)
+                if msg.date:
+                    # Convert UTC message date to local time
+                    msg_date_local = msg.date.astimezone().strftime('%Y-%m-%d')
+                    if msg_date_local != current_date_local:
+                        # Skip messages not from today (local time)
+                        print(f"🔍 DEBUG: Skipping message from {msg_date_local} (not today {current_date_local})")
+                        continue
+                
                 # Skip if we've already seen this message
                 if channel['last_msg_id'] and msg.id <= channel['last_msg_id']:
                     continue
-                
-                # FILTER: Only process messages from TODAY
-                if msg.date:
-                    msg_date = msg.date.strftime('%Y-%m-%d')
-                    if msg_date != current_date:
-                        # Skip messages not from today
-                        continue
                 
                 new_messages_found = True
                 self.messages_processed += 1
@@ -1471,6 +1472,7 @@ class SimpleMonitor:
                     message_preview = msg.text.replace('\n', ' ')[:150]
                     print(f"\n🔔 [{time_str}] NEW MESSAGE from {channel['name']}:")
                     print(f"   📝 {message_preview}")
+                    print(f"   🕐 Message time (local): {msg.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')}")
                     
                     # Check if it's a signal with detailed analysis (pass channel name)
                     signal_data = self.extract_signal_data(msg.text, channel['name'])
@@ -1629,13 +1631,12 @@ class SimpleMonitor:
                 
                 channel['entity'] = entity
                 
-                # Get the latest message ID to start from
-                messages = await self.telegram_client.get_messages(entity, limit=1)
-                if messages:
-                    channel['last_msg_id'] = messages[0].id
+                # DON'T set last_msg_id on reconnect - process all messages from today
+                channel['last_msg_id'] = None
                 
                 channel_title = getattr(entity, 'title', channel['name'])
                 print(f"✅ {channel['name']}: Reconnected to '{channel_title}'")
+                print(f"🔄 Will process ALL messages from today (no last_msg_id set)")
                 
             except Exception as e:
                 print(f"❌ {channel['name']}: Failed to reconnect - {e}")

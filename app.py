@@ -477,6 +477,7 @@ class TwoCycleThreeStepMartingaleStrategy:
         print(f"   Special Logic: Step 4 (C2S1) = Sum of first 3 steps (${c2s1:.2f})")
         print(f"   Strategy: Cycle progression across different assets")
         print(f"   Logic: LOSS at Step 3 → Next asset starts at next cycle")
+        print(f"   🔍 DEBUG MODE: Enhanced logging enabled for win reset tracking")
     
     def get_asset_step(self, asset: str) -> int:
         """Get current step for specific asset - uses global cycle state for new assets"""
@@ -507,6 +508,7 @@ class TwoCycleThreeStepMartingaleStrategy:
         """Get current trade amount for specific asset based on cycle and step"""
         if asset not in self.asset_strategies:
             # New asset starts at current global cycle and step
+            print(f"🔍 DEBUG get_current_amount: Creating new asset {asset} at global C{self.global_cycle}S{self.global_step}")
             self.asset_strategies[asset] = {
                 'cycle': self.global_cycle, 
                 'step': self.global_step, 
@@ -517,7 +519,7 @@ class TwoCycleThreeStepMartingaleStrategy:
         cycle = strategy['cycle']
         step = strategy['step']
         
-        print(f"🔍 DEBUG: get_current_amount for {asset} - C{cycle}S{step}")
+        print(f"🔍 DEBUG get_current_amount: {asset} at C{cycle}S{step} (global: C{self.global_cycle}S{self.global_step})")
         
         # Calculate amount based on cycle and step
         if cycle == 1:
@@ -543,7 +545,7 @@ class TwoCycleThreeStepMartingaleStrategy:
         else:
             amount = self.base_amount
             
-        print(f"🔍 DEBUG: {asset} C{cycle}S{step} → ${amount:.2f}")
+        print(f"🔍 DEBUG get_current_amount: {asset} C{cycle}S{step} → ${amount:.2f}")
         return amount
     
     def record_result(self, won: bool, asset: str, trade_amount: float) -> Dict[str, Any]:
@@ -564,15 +566,19 @@ class TwoCycleThreeStepMartingaleStrategy:
         
         if won:
             print(f"✅ {asset} WIN at C{cycle}S{step}! Resetting global state to C1S1")
-            print(f"🔍 DEBUG: Before reset - Global: C{self.global_cycle}S{self.global_step}")
+            print(f"🔍 DEBUG WIN: Before reset - Global: C{self.global_cycle}S{self.global_step}, Asset: C{cycle}S{step}")
+            print(f"🔍 DEBUG WIN: All tracked assets before reset: {list(self.asset_strategies.keys())}")
             # WIN resets GLOBAL state to C1S1 - all future assets start at C1S1
             self.global_cycle = 1
             self.global_step = 1
-            print(f"🔍 DEBUG: After reset - Global: C{self.global_cycle}S{self.global_step}")
-            # Reset this asset's strategy
-            strategy['cycle'] = 1
-            strategy['step'] = 1
-            strategy['amounts'] = []
+            print(f"🔍 DEBUG WIN: After reset - Global: C{self.global_cycle}S{self.global_step}")
+            
+            # CRITICAL FIX: Clear ALL assets so they start fresh at C1S1
+            # This prevents old asset states from being reused
+            print(f"🔍 DEBUG WIN: Clearing all {len(self.asset_strategies)} tracked assets")
+            self.asset_strategies.clear()
+            
+            print(f"🔍 DEBUG WIN: All assets cleared - next signals will start at C1S1")
             return {'action': 'reset', 'asset': asset, 'next_cycle': 1, 'next_step': 1}
         else:
             print(f"❌ {asset} LOSS at C{cycle}S{step}!")
@@ -601,10 +607,11 @@ class TwoCycleThreeStepMartingaleStrategy:
                     self.global_cycle = 1
                     self.global_step = 1
                     
-                    # Reset this asset's strategy
-                    strategy['cycle'] = 1
-                    strategy['step'] = 1
-                    strategy['amounts'] = []
+                    # CRITICAL FIX: Clear ALL assets so they start fresh at C1S1
+                    print(f"🔍 DEBUG: Clearing all {len(self.asset_strategies)} tracked assets after max loss")
+                    self.asset_strategies.clear()
+                    
+                    print(f"🔍 DEBUG: All assets cleared - next signals will start at C1S1")
                     return {'action': 'reset_after_max_loss', 'asset': asset, 'next_cycle': 1, 'next_step': 1}
     
     def get_status(self, asset: str) -> str:
@@ -2327,10 +2334,19 @@ class MultiAssetPreciseTrader:
                     return False, profit, 'completed'
                     
         except Exception as e:
-            print(f"❌ C{current_cycle}S{current_step} error for {asset}: {e}")
-            # Record as loss
-            strategy.record_result(False, asset, step_amount)
-            return False, -step_amount, 'error'
+            error_msg = str(e).lower()
+            # Check if broker closed the asset, market unavailable, or invalid asset
+            if ('closed' in error_msg or 'market' in error_msg or 'incorrectopentime' in error_msg or 
+                'not available' in error_msg or 'invalid asset' in error_msg or 'timeout' in error_msg):
+                print(f"⚠️ {asset} SKIPPED - Broker closed, invalid, or unavailable")
+                print(f"🔄 Staying at C{current_cycle}S{current_step} - waiting for next signal")
+                # DO NOT record result - keep current step for next asset
+                return False, 0.0, 'skipped'
+            else:
+                # Other errors - record as loss and continue
+                print(f"❌ C{current_cycle}S{current_step} error for {asset}: {e}")
+                strategy.record_result(False, asset, step_amount)
+                return False, -step_amount, 'error'
 
     async def execute_complete_martingale_sequence(self, asset: str, direction: str, amount: float, strategy, channel: str = None) -> Tuple[bool, float]:
         """Execute complete martingale sequence for an asset - wait for each step result before proceeding"""
