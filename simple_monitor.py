@@ -35,13 +35,15 @@ class SimpleMonitor:
             #      'name': 'james martin vip channel m1',
             #      'entity': None,
             #      'last_msg_id': None
+            #      'seen_msg_ids': set()  # Track all seen message IDs
             #  },
-            # {
-            #     'id': 'https://t.me/+teILb87erlthODll',  # Correct PO ADVANCE BOT invite link
-            #     'name': 'po advance bot',
-            #     'entity': None,
-            #     'last_msg_id': None
-            # },
+            {
+                'id': 'https://t.me/+teILb87erlthODll',  # Correct PO ADVANCE BOT invite link
+                'name': 'po advance bot',
+                'entity': None,
+                'last_msg_id': None,
+                'seen_msg_ids': set()  # Track all seen message IDs to avoid duplicates
+            },
             # {
             #     'id': 'https://t.me/luctrader09',
             #     'name': 'lc trader',
@@ -73,12 +75,12 @@ class SimpleMonitor:
             #     'entity': None,
             #     'last_msg_id': None
             # }
-             {
-                'id': 'https://t.me/+3FlQlhKisy5kOTcx',  # NEW CHANNEL
-                 'name': 'James martin free channel',
-                 'entity': None,
-                 'last_msg_id': None
-             }
+            #  {
+            #     'id': 'https://t.me/+3FlQlhKisy5kOTcx',  # NEW CHANNEL
+            #      'name': 'James martin free channel',
+            #      'entity': None,
+            #      'last_msg_id': None
+            #  }
         ]
         
         # CSV file setup - separate file for each channel with date column
@@ -227,7 +229,7 @@ class SimpleMonitor:
                 # Add headers if needed
                 if needs_headers:
                     with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
+                        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                         writer.writerow(headers)
                         
                         # Add existing data if any
@@ -283,7 +285,7 @@ class SimpleMonitor:
                 
                 # Rewrite CSV file with headers and only current date data
                 with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
+                    writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                     writer.writerow(headers)  # Write headers
                     writer.writerows(rows_to_keep)  # Write current date data only
                 
@@ -346,7 +348,7 @@ class SimpleMonitor:
                 
                 # Rewrite CSV file with headers and only current date data
                 with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
+                    writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                     writer.writerow(headers)  # Write headers
                     writer.writerows(rows_to_keep)  # Write current date data only
                 
@@ -408,7 +410,7 @@ class SimpleMonitor:
                 
                 # Rewrite with only headers
                 with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
+                    writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                     writer.writerow(headers)
                 
                 if row_count > 0:
@@ -450,7 +452,7 @@ class SimpleMonitor:
                             
                             # Rewrite file with headers + existing data
                             with open(csv_file, 'w', newline='', encoding='utf-8') as write_f:
-                                writer = csv.writer(write_f)
+                                writer = csv.writer(write_f, quoting=csv.QUOTE_ALL)
                                 writer.writerow(headers)
                                 # Add existing data if any
                                 if existing_data.strip():
@@ -465,7 +467,7 @@ class SimpleMonitor:
             # Create new file with headers if needed
             if file_needs_headers and not os.path.exists(csv_file):
                 with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
+                    writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                     writer.writerow(headers)
                 print(f"✅ Created CSV file with headers for {channel_name}: {csv_file}")
     
@@ -482,15 +484,28 @@ class SimpleMonitor:
                 print(f"   📭 No messages found in {channel['name']}")
                 return None
             
-            # Filter messages to only TODAY
+            # Filter messages to only TODAY (using LOCAL timezone)
             current_date = datetime.now().strftime('%Y-%m-%d')
             today_messages = []
             
+            print(f"   🔍 Current date (local): {current_date}")
+            print(f"   🔍 Filtering messages by LOCAL date...")
+            
             for msg in messages:
                 if msg.date:
-                    msg_date = msg.date.strftime('%Y-%m-%d')
-                    if msg_date == current_date:
+                    # Convert UTC message date to LOCAL time for comparison
+                    msg_date_local = msg.date.astimezone().strftime('%Y-%m-%d')
+                    
+                    if msg_date_local == current_date:
                         today_messages.append(msg)
+                        if len(today_messages) <= 5:  # Show first 5 for debugging
+                            msg_time_local = msg.date.astimezone().strftime('%H:%M:%S')
+                            print(f"   ✅ Message {msg.id}: {msg_time_local} (local)")
+                    elif len(today_messages) == 0 and msg.id >= 3670:  # Show some recent messages for debugging
+                        msg_time_local = msg.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"   ❌ Message {msg.id}: {msg_time_local} (not today)")
+            
+            print(f"   📊 Total messages from today: {len(today_messages)}")
             
             if not today_messages:
                 print(f"   📭 No messages from TODAY ({current_date}) found in {channel['name']}")
@@ -689,6 +704,7 @@ class SimpleMonitor:
                     # DON'T set last_msg_id on startup - process all messages from today
                     # This ensures we don't miss any messages if monitor restarts
                     channel['last_msg_id'] = None
+                    channel['seen_msg_ids'] = set()  # Clear seen messages on startup
                     
                     channel_title = getattr(entity, 'title', channel['name'])
                     print(f"✅ {channel['name']}: Connected to '{channel_title}'")
@@ -1395,7 +1411,7 @@ class SimpleMonitor:
                 return False
             
             with open(csv_file, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
+                writer = csv.writer(f, quoting=csv.QUOTE_ALL)  # Quote all fields to prevent CSV format issues
                 
                 # Prepare row data with current date column
                 current_datetime = datetime.now()
@@ -1403,7 +1419,17 @@ class SimpleMonitor:
                 timestamp = current_datetime.strftime('%Y-%m-%d %H:%M:%S')  # Full timestamp
                 channel_name = channel['name']
                 message_id = message.id
-                message_text = message.text.replace('\n', ' ').replace('\r', ' ') if message.text else ''
+                
+                # Clean message text - remove newlines, tabs, and extra spaces
+                if message.text:
+                    message_text = message.text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+                    # Remove multiple spaces
+                    message_text = ' '.join(message_text.split())
+                    # Limit length to avoid CSV issues
+                    if len(message_text) > 500:
+                        message_text = message_text[:500] + '...'
+                else:
+                    message_text = ''
                 
                 if signal_data:
                     is_signal = 'Yes'
@@ -1452,17 +1478,21 @@ class SimpleMonitor:
                     msg_date_local = msg.date.astimezone().strftime('%Y-%m-%d')
                     if msg_date_local != current_date_local:
                         # Skip messages not from today (local time)
-                        print(f"🔍 DEBUG: Skipping message from {msg_date_local} (not today {current_date_local})")
                         continue
                 
-                # Skip if we've already seen this message
-                if channel['last_msg_id'] and msg.id <= channel['last_msg_id']:
+                # Skip if we've already seen this specific message ID
+                if msg.id in channel.get('seen_msg_ids', set()):
                     continue
                 
                 new_messages_found = True
                 self.messages_processed += 1
                 
-                # Update last seen message ID
+                # Mark this message as seen
+                if 'seen_msg_ids' not in channel:
+                    channel['seen_msg_ids'] = set()
+                channel['seen_msg_ids'].add(msg.id)
+                
+                # Update last seen message ID (for reference only)
                 if not channel['last_msg_id'] or msg.id > channel['last_msg_id']:
                     channel['last_msg_id'] = msg.id
                 
@@ -1633,6 +1663,7 @@ class SimpleMonitor:
                 
                 # DON'T set last_msg_id on reconnect - process all messages from today
                 channel['last_msg_id'] = None
+                channel['seen_msg_ids'] = set()  # Clear seen messages on reconnect
                 
                 channel_title = getattr(entity, 'title', channel['name'])
                 print(f"✅ {channel['name']}: Reconnected to '{channel_title}'")

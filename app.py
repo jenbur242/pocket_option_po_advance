@@ -1625,17 +1625,21 @@ class MultiAssetPreciseTrader:
         
         # Channel selection and trade duration settings (simplified)
         self.active_channel = None  # Will be set by user
-        self.james_martin_free_duration = 300  # 5:00 for James Martin Free Channel
+        self.po_advance_bot_duration = 60  # 1:00 (60 seconds) for PO Advance Bot
         
         # Use date-based CSV filename - support new channel only
         # Will be auto-updated to find latest available CSV
-        self.james_martin_free_csv = None
+        self.po_advance_bot_csv = None
         self.current_csv_date = None
         self._update_csv_filenames(show_info=True)
         
         self.trade_history = []
         self.pending_immediate_trades = []  # Queue for immediate next step trades
         self.executed_signals = set()  # Track executed signal combinations to prevent duplicates
+        
+        # Payout tracking - minimum 80% required
+        self.min_payout_percentage = 80.0  # Minimum payout percentage to execute trade
+        self.asset_payouts = {}  # Track current payout for each asset
         
         # API health tracking
         self.api_failures = 0
@@ -1667,10 +1671,11 @@ class MultiAssetPreciseTrader:
             'USDVND'     # Vietnamese Dong - limited availability
         }
         
-        print(f"📊 James Martin Free Channel CSV: {self.james_martin_free_csv}")
-        print(f"⏰ Trade Duration: James Martin Free Channel (5:00)")
+        print(f"📊 PO Advance Bot CSV: {self.po_advance_bot_csv}")
+        print(f"⏰ Trade Duration: PO Advance Bot (1:00)")
         print(f"🎯 Active Channel: {self.active_channel or 'Not selected'}")
         print(f"⏱️  Execution: Exactly at signal time + 10ms")
+        print(f"💹 Minimum Payout: {self.min_payout_percentage}% (trades with lower payout will be skipped)")
         
         # Display stop loss and take profit settings
         if self.stop_loss is not None:
@@ -1687,16 +1692,16 @@ class MultiAssetPreciseTrader:
     def _update_csv_filenames(self, show_info: bool = False):
         """Set fixed CSV filenames for the new channel (no date-based naming)"""
         # Use FIXED CSV filename that matches simple_monitor.py exactly
-        self.james_martin_free_csv = "pocketoption_james_martin_free_channel.csv"
+        self.po_advance_bot_csv = "pocketoption_po_advance_bot.csv"
         
         # Only show detailed info when requested (during initialization)
         if show_info:
             # Show only the selected channel's CSV file, not all channels
             if self.active_channel:
                 # Get the selected channel's CSV file and details
-                if self.active_channel == "james_martin_free":
-                    selected_csv = self.james_martin_free_csv
-                    selected_name = "James Martin Free Channel"
+                if self.active_channel == "po_advance_bot":
+                    selected_csv = self.po_advance_bot_csv
+                    selected_name = "PO Advance Bot"
                 else:
                     selected_csv = None
                     selected_name = "Unknown"
@@ -1722,8 +1727,8 @@ class MultiAssetPreciseTrader:
     
     def get_channel_duration(self, channel: str) -> int:
         """Get duration in seconds for specific channel"""
-        if channel == "james_martin_free":
-            return self.james_martin_free_duration
+        if channel == "po_advance_bot":
+            return self.po_advance_bot_duration
         else:
             return 300  # Default fallback (5:00)
     
@@ -1788,6 +1793,136 @@ class MultiAssetPreciseTrader:
         
         return status
     
+    def _on_payout_update(self, payout_info: Dict[str, Any]):
+        """Handle payout update events from websocket"""
+        try:
+            asset_symbol = payout_info.get('symbol', '')
+            payout = payout_info.get('payout', 0)
+            
+            # Normalize asset symbol (remove # prefix if present)
+            if asset_symbol.startswith('#'):
+                asset_symbol = asset_symbol[1:]
+            
+            # Store payout information with multiple variations
+            self.asset_payouts[asset_symbol] = payout
+            self.asset_payouts[asset_symbol.upper()] = payout
+            
+            # Also store without _OTC suffix if present
+            if '_OTC' in asset_symbol.upper():
+                base_symbol = asset_symbol.upper().replace('_OTC', '')
+                self.asset_payouts[base_symbol] = payout
+            
+            # Debug: Print first few payout updates
+            if len(self.asset_payouts) <= 10:
+                print(f"\n💹 Payout update: {asset_symbol} = {payout}%")
+            
+        except Exception as e:
+            print(f"⚠️ Error processing payout update: {e}")
+    
+    def _on_json_data(self, data: Any):
+        """Handle JSON data messages that contain asset information"""
+        try:
+            # Check if this is asset data (list of lists with asset info)
+            if isinstance(data, list) and len(data) > 0:
+                for asset_info in data:
+                    if isinstance(asset_info, list) and len(asset_info) > 5:
+                        # Asset data format: [id, symbol, name, type, ?, payout, ...]
+                        # Index 5 is the payout percentage
+                        asset_symbol = asset_info[1]
+                        payout = asset_info[5]
+                        
+                        # Normalize asset symbol (remove # prefix if present)
+                        if asset_symbol.startswith('#'):
+                            asset_symbol = asset_symbol[1:]
+                        
+                        # Store payout information with ALL possible variations
+                        # Store as-is
+                        self.asset_payouts[asset_symbol] = payout
+                        # Store uppercase
+                        self.asset_payouts[asset_symbol.upper()] = payout
+                        # Store lowercase
+                        self.asset_payouts[asset_symbol.lower()] = payout
+                        
+                        # Also store without _otc suffix if present
+                        if '_otc' in asset_symbol.lower():
+                            base_symbol = asset_symbol.replace('_otc', '').replace('_OTC', '')
+                            self.asset_payouts[base_symbol] = payout
+                            self.asset_payouts[base_symbol.upper()] = payout
+                            self.asset_payouts[base_symbol.lower()] = payout
+                        
+        except Exception as e:
+            pass  # Ignore parsing errors for non-asset messages
+    
+    def get_asset_payout(self, asset: str) -> float:
+        """Get current payout percentage for an asset"""
+        # Try multiple variations of the asset name
+        variations = [
+            asset,
+            asset.upper(),
+            asset.lower(),
+            asset.upper().replace('_OTC', ''),
+            asset.upper().replace('_otc', ''),
+            asset.replace('_OTC', ''),
+            asset.replace('_otc', ''),
+            f"#{asset}",
+            f"#{asset.upper()}",
+            f"#{asset.lower()}",
+        ]
+        
+        for var in variations:
+            if var in self.asset_payouts:
+                return self.asset_payouts[var]
+        
+        # Return 0 if no data available
+        return 0.0
+    
+    def check_payout_requirement(self, asset: str) -> Tuple[bool, float]:
+        """Check if asset meets minimum payout requirement (80%)"""
+        payout = self.get_asset_payout(asset)
+        
+        if payout >= self.min_payout_percentage:
+            return True, payout
+        else:
+            return False, payout
+    
+    def show_payout_status(self):
+        """Show current payout data for debugging"""
+        if not self.asset_payouts:
+            print("⚠️ No payout data received yet")
+            print("   Payout data will be captured from websocket messages")
+        else:
+            print(f"💹 Payout data received for {len(self.asset_payouts)} asset variations")
+            # Get unique base assets (without duplicates from variations)
+            unique_assets = set()
+            for asset in self.asset_payouts.keys():
+                # Normalize to get base asset name
+                base = asset.upper().replace('_OTC', '').replace('#', '')
+                unique_assets.add(base)
+            print(f"💹 Unique assets: {len(unique_assets)}")
+            
+            # Show sample assets
+            sample_assets = sorted(list(self.asset_payouts.items()))[:20]
+            print(f"💹 Sample payout data (first 20):")
+            for asset, payout in sample_assets:
+                print(f"   {asset}: {payout}%")
+            if len(self.asset_payouts) > 20:
+                print(f"   ... and {len(self.asset_payouts) - 20} more")
+            
+            # Check for specific test assets
+            test_assets = ['MADUSD_otc', 'USDEGP_otc', 'EURUSD_otc']
+            print(f"\n💹 Testing specific assets:")
+            for test_asset in test_assets:
+                payout = self.get_asset_payout(test_asset)
+                if payout > 0:
+                    print(f"   ✅ {test_asset}: {payout}%")
+                else:
+                    print(f"   ❌ {test_asset}: Not found")
+                    # Show what keys contain this asset
+                    matching = [k for k in self.asset_payouts.keys() if test_asset.upper().replace('_OTC', '') in k.upper()]
+                    if matching:
+                        print(f"      Similar keys found: {matching[:3]}")
+
+    
     async def connect(self, is_demo: bool = True) -> bool:
         """Connect to PocketOption"""
         try:
@@ -1810,6 +1945,27 @@ class MultiAssetPreciseTrader:
                     
                     print(f"✅ Connected! {'DEMO' if is_demo else 'REAL'} Account")
                     print(f"💰 Balance: ${balance.balance:.2f}")
+                    
+                    # Register payout update handler (for payout_update events)
+                    self.client._websocket.add_event_handler("payout_update", self._on_payout_update)
+                    
+                    # Register JSON data handler (for asset data messages) - THIS IS CRITICAL
+                    self.client._websocket.add_event_handler("json_data", self._on_json_data)
+                    
+                    print(f"✅ Payout monitoring enabled (min: {self.min_payout_percentage}%)")
+                    
+                    # Wait longer for payout data to arrive
+                    print(f"⏳ Waiting for payout data (5 seconds)...")
+                    for i in range(5):
+                        await asyncio.sleep(1.0)
+                        if len(self.asset_payouts) > 0:
+                            print(f"   Received {len(self.asset_payouts)} payout entries...")
+                    
+                    # Show payout status
+                    print()
+                    self.show_payout_status()
+                    print()
+                    
                     return True
                     
                 except Exception as conn_error:
@@ -1832,10 +1988,10 @@ class MultiAssetPreciseTrader:
             self._update_csv_filenames()
             
             # Determine which CSV file to use based on active channel
-            if self.active_channel == "james_martin_free":
-                csv_file = self.james_martin_free_csv
-                trade_duration = self.james_martin_free_duration
-                channel_name = "James Martin Free Channel"
+            if self.active_channel == "po_advance_bot":
+                csv_file = self.po_advance_bot_csv
+                trade_duration = self.po_advance_bot_duration
+                channel_name = "PO Advance Bot"
             else:
                 return []
             
@@ -2347,6 +2503,150 @@ class MultiAssetPreciseTrader:
                 print(f"❌ C{current_cycle}S{current_step} error for {asset}: {e}")
                 strategy.record_result(False, asset, step_amount)
                 return False, -step_amount, 'error'
+    
+    async def execute_single_2cycle_3step_trade_with_signal(self, signal: Dict, base_amount: float, strategy: 'TwoCycleThreeStepMartingaleStrategy') -> Tuple[bool, float, str]:
+        """Execute a single trade in the 2-cycle 3-step sequence using signal data"""
+        asset = signal['asset']
+        direction = signal['direction']
+        channel = signal.get('channel', self.active_channel)
+        
+        current_cycle = strategy.get_asset_cycle(asset)
+        current_step = strategy.get_asset_step(asset)
+        step_amount = strategy.get_current_amount(asset)
+        
+        print(f"📊 C{current_cycle}S{current_step}: {asset} {direction.upper()} ${step_amount}")
+        print(f"⏱️  Trade execution at: {get_user_time_str()}")
+        
+        # Special display for Step 4 (C2S1) which uses sum of first 3 steps
+        if current_cycle == 2 and current_step == 1:
+            c1s1 = base_amount
+            c1s2 = base_amount * strategy.multiplier
+            c1s3 = base_amount * (strategy.multiplier ** 2)
+            sum_first_3 = c1s1 + c1s2 + c1s3
+            print(f"🔢 Step 4 Logic: ${c1s1:.2f} + ${c1s2:.2f} + ${c1s3:.2f} = ${sum_first_3:.2f}")
+        
+        try:
+            # Execute trade based on step
+            if current_step == 1:
+                # For Step 1, use the signal's precise timing
+                won, profit = await self.execute_precise_trade(signal, step_amount)
+            else:
+                # For Step 2 and 3, execute immediately
+                won, profit = await self.execute_immediate_trade(asset, direction, step_amount, channel)
+            
+            # Record result and get next action
+            next_action = strategy.record_result(won, asset, step_amount)
+            
+            if won:
+                print(f"✅ {asset} WIN at C{current_cycle}S{current_step}! Profit: ${profit:+.2f}")
+                return True, profit, 'completed'
+            else:
+                print(f"❌ {asset} LOSS at C{current_cycle}S{current_step}! Loss: ${profit:+.2f}")
+                
+                if next_action['action'] == 'continue':
+                    # Move to next step in same cycle (same asset)
+                    print(f"🔄 Moving to C{current_cycle}S{next_action['next_step']} for {asset}")
+                    return False, profit, 'continue'
+                elif next_action['action'] == 'asset_completed':
+                    # Asset completed - no more trades for this asset
+                    print(f"🔄 {asset} completed - cycle advanced for next assets")
+                    return False, profit, 'completed'
+                elif next_action['action'] in ['reset', 'reset_after_max_loss']:
+                    # Strategy reset
+                    print(f"🔄 {asset} - Strategy reset for next signal")
+                    return False, profit, 'completed'
+                else:
+                    print(f"🚨 {asset} - Unexpected action: {next_action['action']}")
+                    return False, profit, 'completed'
+                    
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Check if payout is too low
+            if 'payout too low' in error_msg:
+                print(f"⚠️ {asset} SKIPPED - Payout below 80% minimum")
+                print(f"🔄 Staying at C{current_cycle}S{current_step} - waiting for better payout")
+                return False, 0.0, 'skipped'
+            # Check if broker closed the asset, market unavailable, or invalid asset
+            elif ('closed' in error_msg or 'market' in error_msg or 'incorrectopentime' in error_msg or 
+                'not available' in error_msg or 'invalid asset' in error_msg or 'timeout' in error_msg):
+                print(f"⚠️ {asset} SKIPPED - Broker closed, invalid, or unavailable")
+                print(f"🔄 Staying at C{current_cycle}S{current_step} - waiting for next signal")
+                return False, 0.0, 'skipped'
+            else:
+                # Other errors - record as loss and continue
+                print(f"❌ C{current_cycle}S{current_step} error for {asset}: {e}")
+                strategy.record_result(False, asset, step_amount)
+                return False, -step_amount, 'error'
+    
+    async def execute_single_3cycle_2step_trade(self, asset: str, direction: str, base_amount: float, strategy: 'TwoStepMartingaleStrategy', channel: str = None) -> Tuple[bool, float, str]:
+        """Execute a single trade in the 3-cycle 2-step sequence and return next action"""
+        current_cycle = strategy.get_asset_cycle(asset)
+        current_step = strategy.get_asset_step(asset)
+        step_amount = strategy.get_current_amount(asset)
+        
+        print(f"📊 C{current_cycle}S{current_step}: {asset} {direction.upper()} ${step_amount}")
+        print(f"⏱️  Trade execution at: {get_user_time_str()}")
+        
+        try:
+            # Execute trade based on step
+            if current_step == 1:
+                # For Step 1, use precise timing
+                won, profit = await self.execute_precise_trade({
+                    'asset': asset,
+                    'direction': direction,
+                    'trade_datetime': get_user_time(),
+                    'signal_datetime': get_user_time(),
+                    'close_datetime': get_user_time() + timedelta(seconds=60),
+                    'channel': channel or self.active_channel,
+                    'duration': 60
+                }, step_amount)
+            else:
+                # For Step 2, execute immediately
+                won, profit = await self.execute_immediate_trade(asset, direction, step_amount, channel or self.active_channel)
+            
+            # Record result and get next action
+            next_action = strategy.record_result(won, asset, step_amount)
+            
+            if won:
+                print(f"✅ {asset} WIN at C{current_cycle}S{current_step}! Profit: ${profit:+.2f}")
+                return True, profit, 'completed'
+            else:
+                print(f"❌ {asset} LOSS at C{current_cycle}S{current_step}! Loss: ${profit:+.2f}")
+                
+                if next_action['action'] == 'continue':
+                    # Move to next step in same cycle (same asset)
+                    print(f"🔄 Moving to C{current_cycle}S{next_action['next_step']} for {asset}")
+                    return False, profit, 'continue'
+                elif next_action['action'] == 'asset_completed':
+                    # Asset completed - no more trades for this asset
+                    print(f"🔄 {asset} completed - cycle advanced for next assets")
+                    return False, profit, 'completed'
+                elif next_action['action'] in ['reset', 'reset_after_max_loss']:
+                    # Strategy reset
+                    print(f"🔄 {asset} - Strategy reset for next signal")
+                    return False, profit, 'completed'
+                else:
+                    print(f"🚨 {asset} - Unexpected action: {next_action['action']}")
+                    return False, profit, 'completed'
+                    
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Check if payout is too low
+            if 'payout too low' in error_msg:
+                print(f"⚠️ {asset} SKIPPED - Payout below 80% minimum")
+                print(f"🔄 Staying at C{current_cycle}S{current_step} - waiting for better payout")
+                return False, 0.0, 'skipped'
+            # Check if broker closed the asset, market unavailable, or invalid asset
+            elif ('closed' in error_msg or 'market' in error_msg or 'incorrectopentime' in error_msg or 
+                'not available' in error_msg or 'invalid asset' in error_msg or 'timeout' in error_msg):
+                print(f"⚠️ {asset} SKIPPED - Broker closed, invalid, or unavailable")
+                print(f"🔄 Staying at C{current_cycle}S{current_step} - waiting for next signal")
+                return False, 0.0, 'skipped'
+            else:
+                # Other errors - record as loss and continue
+                print(f"❌ C{current_cycle}S{current_step} error for {asset}: {e}")
+                strategy.record_result(False, asset, step_amount)
+                return False, -step_amount, 'error'
 
     async def execute_complete_martingale_sequence(self, asset: str, direction: str, amount: float, strategy, channel: str = None) -> Tuple[bool, float]:
         """Execute complete martingale sequence for an asset - wait for each step result before proceeding"""
@@ -2434,17 +2734,25 @@ class MultiAssetPreciseTrader:
         try:
             execution_time = get_user_time()
             
+            # Check payout requirement (80% minimum)
+            payout_ok, payout = self.check_payout_requirement(asset)
+            if not payout_ok:
+                print(f"⚠️ SKIPPING {asset}: Payout {payout:.1f}% < {self.min_payout_percentage}% minimum")
+                raise Exception(f"Payout too low: {payout:.1f}% < {self.min_payout_percentage}%")
+            
+            print(f"✅ Payout check passed: {asset} = {payout:.1f}%")
+            
             # Use channel-specific duration
             dynamic_duration = self.get_channel_duration(channel or self.active_channel)
             target_close_time = execution_time + timedelta(seconds=dynamic_duration)
             
             # Determine channel name for display
-            if channel == "james_martin_free":
-                channel_name = "James Martin Free"
+            if channel == "po_advance_bot":
+                channel_name = "PO Advance Bot"
             else:
                 # Use active channel if not specified
-                if self.active_channel == "james_martin_free":
-                    channel_name = "James Martin Free"
+                if self.active_channel == "po_advance_bot":
+                    channel_name = "PO Advance Bot"
                 else:
                     channel_name = "Default"
             
@@ -2559,10 +2867,18 @@ class MultiAssetPreciseTrader:
             signal_time = signal['signal_datetime']
             channel = signal.get('channel', self.active_channel)
             
+            # Check payout requirement (80% minimum)
+            payout_ok, payout = self.check_payout_requirement(asset)
+            if not payout_ok:
+                print(f"⚠️ SKIPPING {asset}: Payout {payout:.1f}% < {self.min_payout_percentage}% minimum")
+                raise Exception(f"Payout too low: {payout:.1f}% < {self.min_payout_percentage}%")
+            
+            print(f"✅ Payout check passed: {asset} = {payout:.1f}%")
+            
             # Get channel-specific duration
-            if channel == "james_martin_free":
-                dynamic_duration = self.james_martin_free_duration
-                channel_name = "James Martin Free"
+            if channel == "po_advance_bot":
+                dynamic_duration = self.po_advance_bot_duration
+                channel_name = "PO Advance Bot"
             else:
                 dynamic_duration = signal.get('duration', 300)  # Use signal duration or default to 5:00
                 channel_name = "Default"
@@ -4744,23 +5060,45 @@ class MultiAssetPreciseTrader:
                     current_date = current_time.strftime('%Y-%m-%d')
                     current_time_hms = current_time.strftime('%H:%M:%S')
                     status_line = f"{current_date} | {current_time_hms} | No signals available"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    print(f"\r{status_line:<100}", end="", flush=True)
                     await asyncio.sleep(0.01)  # Check every 10ms
                     continue
                 
                 # Find next signal
                 for signal in signals:
                     signal_time_str = signal['signal_datetime'].strftime('%H:%M:%S')
+                    asset = signal['asset']
                     
-                    # Show current time and signal time
+                    # Get payout for this asset
+                    payout = self.get_asset_payout(asset)
+                    payout_display = f"{payout:.1f}%" if payout > 0 else "N/A"
+                    
+                    # Debug: Show what we're looking for vs what we have
+                    if payout == 0 and len(self.asset_payouts) > 0:
+                        # Only show debug for first occurrence
+                        if not hasattr(self, '_debug_shown'):
+                            self._debug_shown = set()
+                        if asset not in self._debug_shown:
+                            self._debug_shown.add(asset)
+                            # Check if similar assets exist
+                            similar = [k for k in self.asset_payouts.keys() if asset.upper().replace('_OTC', '').replace('_otc', '') in k.upper()]
+                            if similar:
+                                print(f"\n⚠️ Payout lookup issue for '{asset}':")
+                                print(f"   Similar assets found: {similar[:3]}")
+                                print(f"   Using first match: {similar[0]} = {self.asset_payouts[similar[0]]}%")
+                                # Use the first similar match
+                                payout = self.asset_payouts[similar[0]]
+                                payout_display = f"{payout:.1f}%"
+                    
+                    # Show current time and signal time with payout
                     current_date = current_time.strftime('%Y-%m-%d')
                     current_time_hms = current_time.strftime('%H:%M:%S')
                     signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
                     time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
                     
-                    # Clear line and show clean status
-                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {signal['asset']} {signal['direction'].upper()}"
-                    print(f"\r{status_line:<80}", end="", flush=True)
+                    # Clear line and show clean status with payout
+                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {asset} {signal['direction'].upper()} | Payout: {payout_display}"
+                    print(f"\r{status_line:<100}", end="", flush=True)
                     
                     # Execute when times match exactly
                     if current_time_str == signal_time_str:
@@ -4768,9 +5106,15 @@ class MultiAssetPreciseTrader:
                         
                         # Execute trade using 2-cycle 3-step strategy
                         try:
-                            won, profit, action = await self.execute_single_2cycle_3step_trade(
-                                signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
+                            # Pass the signal object to the trade execution
+                            won, profit, action = await self.execute_single_2cycle_3step_trade_with_signal(
+                                signal, base_amount, strategy
                             )
+                            
+                            # Handle skipped trades - don't update profit or count
+                            if action == 'skipped':
+                                print(f"⏭️  Skipping to next signal...")
+                                break  # Exit signal loop and wait for next signal
                             
                             # Update session profit
                             self.update_session_profit(profit)
@@ -4847,6 +5191,182 @@ class MultiAssetPreciseTrader:
             
             print("=" * 60)
             print("👋 Thank you for using the 2-Cycle 3-Step Martingale Trader!")
+    
+    async def start_3cycle_2step_trading(self, base_amount: float, multiplier: float = 2.5, is_demo: bool = True):
+        """Start 3-Cycle 2-Step Martingale trading: 3 cycles × 2 steps = up to 6 trades"""
+        print(f"\n🚀 3-CYCLE 2-STEP MARTINGALE TRADING STARTED")
+        print("=" * 60)
+        print(f"💰 Base Amount: ${base_amount}")
+        print(f"📈 Multiplier: {multiplier}")
+        print(f"🔄 Cross-Asset 2-Step System: Precise timing with 1-second checks")
+        print(f"⏳ Logic: Wait for exact signal time → Execute → Cross-asset progression")
+        print(f"📅 Date Focus: TODAY ONLY ({get_user_time().strftime('%Y-%m-%d')}) - no future dates")
+        print(f"⏰ Timing: Check every 1 second for signal matches")
+        print(f"✅ WIN at any step → All assets reset to C1S1")
+        print(f"❌ LOSS at Step 1 → Move to Step 2 (same asset, 10ms delay)")
+        print(f"❌ LOSS at Step 2 → Next asset starts at next cycle")
+        print(f"🔄 Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
+        
+        # Display stop loss and take profit info
+        if self.stop_loss is not None or self.take_profit is not None:
+            print(f"💡 Risk Management:")
+            if self.stop_loss is not None:
+                print(f"   🛑 Stop Loss: ${self.stop_loss:.2f}")
+            if self.take_profit is not None:
+                print(f"   🎯 Take Profit: ${self.take_profit:.2f}")
+        
+        print("Press Ctrl+C to stop")
+        print("=" * 60)
+        
+        strategy = TwoStepMartingaleStrategy(base_amount, multiplier)
+        session_trades = 0
+        
+        try:
+            # Show initial signal overview
+            initial_signals = self.get_signals_from_csv()
+            if initial_signals:
+                print(f"✅ Found {len(initial_signals)} signals in CSV:")
+                current_time = get_user_time()
+                for i, signal in enumerate(initial_signals[:5]):  # Show first 5
+                    time_until = (signal['trade_datetime'] - current_time).total_seconds()
+                    wait_minutes = int(time_until // 60)
+                    wait_seconds = int(time_until % 60)
+                    status = "Ready!" if time_until <= 5 else f"in {wait_minutes}m {wait_seconds}s"
+                    print(f"   {i+1}. {signal['asset']} {signal['direction'].upper()} at {signal['signal_time']} ({status})")
+                if len(initial_signals) > 5:
+                    print(f"   ... and {len(initial_signals) - 5} more signals")
+            else:
+                print(f"❌ No signals found in CSV - add signals to the selected channel CSV file")
+            print("=" * 60)
+            
+            while True:
+                # Get current time
+                current_time = get_user_time()
+                current_time_str = current_time.strftime('%H:%M:%S')
+                
+                # Check for stop loss or take profit
+                should_stop, stop_reason = self.should_stop_trading()
+                if should_stop:
+                    print(f"\n{stop_reason}")
+                    print("🛑 Trading stopped due to risk management limits")
+                    break
+                
+                # Get fresh signals from CSV
+                signals = self.get_signals_from_csv()
+                
+                if not signals:
+                    current_date = current_time.strftime('%Y-%m-%d')
+                    current_time_hms = current_time.strftime('%H:%M:%S')
+                    status_line = f"{current_date} | {current_time_hms} | No signals available"
+                    print(f"\r{status_line:<100}", end="", flush=True)
+                    await asyncio.sleep(0.01)  # Check every 10ms
+                    continue
+                
+                # Find next signal
+                for signal in signals:
+                    signal_time_str = signal['signal_datetime'].strftime('%H:%M:%S')
+                    asset = signal['asset']
+                    
+                    # Get payout for this asset
+                    payout = self.get_asset_payout(asset)
+                    payout_display = f"{payout:.1f}%" if payout > 0 else "N/A"
+                    
+                    # Debug: Show what we're looking for vs what we have
+                    if payout == 0 and len(self.asset_payouts) > 0:
+                        # Only show debug for first occurrence
+                        if not hasattr(self, '_debug_shown'):
+                            self._debug_shown = set()
+                        if asset not in self._debug_shown:
+                            self._debug_shown.add(asset)
+                            # Check if similar assets exist
+                            similar = [k for k in self.asset_payouts.keys() if asset.upper().replace('_OTC', '').replace('_otc', '') in k.upper()]
+                            if similar:
+                                print(f"\n⚠️ Payout lookup issue for '{asset}':")
+                                print(f"   Similar assets found: {similar[:3]}")
+                                print(f"   Using first match: {similar[0]} = {self.asset_payouts[similar[0]]}%")
+                                # Use the first similar match
+                                payout = self.asset_payouts[similar[0]]
+                                payout_display = f"{payout:.1f}%"
+                    
+                    # Show current time and signal time with payout
+                    current_date = current_time.strftime('%Y-%m-%d')
+                    current_time_hms = current_time.strftime('%H:%M:%S')
+                    signal_time_hms = signal['signal_datetime'].strftime('%H:%M:%S')
+                    time_remaining = format_time_remaining(current_time, signal['signal_datetime'])
+                    
+                    # Clear line and show clean status with payout
+                    status_line = f"{current_date} | {current_time_hms} | {signal_time_hms} | {time_remaining} | {asset} {signal['direction'].upper()} | Payout: {payout_display}"
+                    print(f"\r{status_line:<100}", end="", flush=True)
+                    
+                    # Execute when times match exactly
+                    if current_time_str == signal_time_str:
+                        print(f"\n🎯 EXECUTING: {signal['asset']} {signal['direction'].upper()} at {signal_time_str}")
+                        
+                        # Execute trade using 3-cycle 2-step strategy
+                        try:
+                            won, profit, action = await self.execute_single_3cycle_2step_trade(
+                                signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
+                            )
+                            
+                            # Handle skipped trades - don't update profit or count
+                            if action == 'skipped':
+                                print(f"⏭️  Skipping to next signal...")
+                                break  # Exit signal loop and wait for next signal
+                            
+                            # Update session profit
+                            self.update_session_profit(profit)
+                            session_trades += 1
+                            
+                            # Show result
+                            result_emoji = "✅" if won else "❌"
+                            print(f"{result_emoji} {signal['asset']} {'WIN' if won else 'LOSS'} - ${profit:+.2f}")
+                            
+                            # Handle the action result for 2-step progression
+                            if action == 'continue':
+                                # Need to execute next step immediately
+                                current_step = strategy.get_asset_step(signal['asset'])
+                                print(f"⚡ CONTINUING TO STEP {current_step} for {signal['asset']}")
+                                await asyncio.sleep(0.01)  # 10ms delay
+                                
+                                # Execute next step immediately
+                                try:
+                                    won2, profit2, action2 = await self.execute_single_3cycle_2step_trade(
+                                        signal['asset'], signal['direction'], base_amount, strategy, signal.get('channel')
+                                    )
+                                    
+                                    # Update session profit
+                                    self.update_session_profit(profit2)
+                                    session_trades += 1
+                                    
+                                    # Show result
+                                    result_emoji2 = "✅" if won2 else "❌"
+                                    current_step2 = strategy.get_asset_step(signal['asset']) - 1  # Previous step
+                                    print(f"{result_emoji2} {signal['asset']} STEP {current_step2} {'WIN' if won2 else 'LOSS'} - ${profit2:+.2f}")
+                                    
+                                except Exception as e2:
+                                    print(f"❌ Step 2 Error: {e2}")
+                            
+                        except Exception as e:
+                            print(f"❌ Error: {e}")
+                        
+                        break
+                    
+                    break  # Show only first signal
+                
+                await asyncio.sleep(0.01)  # Check every 10ms
+                
+        except KeyboardInterrupt:
+            print(f"\n\n🛑 3-CYCLE 2-STEP MARTINGALE TRADING STOPPED")
+            print("=" * 60)
+            print(f"📊 SESSION SUMMARY:")
+            print(f"   🎯 Total Signals Processed: {session_trades}")
+            print(f"   💰 Final P&L: ${self.session_profit:+.2f}")
+            
+            # Show final strategy status
+            strategy.show_strategy_status()
+            
+            print("=" * 60)
+            print("👋 Thank you for using the 3-Cycle 2-Step Martingale Trader!")
 
     async def start_date_specific_trading(self, target_date: str, base_amount: float, strategy_type: str = "3step", multiplier: float = 2.5, is_demo: bool = True):
         """Start trading for a specific date continuously"""
@@ -5177,22 +5697,34 @@ async def main():
         print("    • WIN at any step → All assets reset to Cycle 1")
         print("    • Cross-asset cycle progression")
         print()
+        print("2️⃣  Option 2: 3-Cycle 2-Step Martingale")
+        print("    • 3 cycles × 2 steps = up to 6 trades")
+        print("    • LOSS at Step 2 → Next ASSET starts at next cycle")
+        print("    • WIN at any step → All assets reset to Cycle 1")
+        print("    • Cross-asset cycle progression")
+        print()
         print("0️⃣  Exit")
         print("=" * 40)
         
         try:
-            strategy_choice = input("\n🎯 Select strategy (1 or 0 to exit): ").strip()
+            strategy_choice = input("\n🎯 Select strategy (1, 2, or 0 to exit): ").strip()
             
             if strategy_choice == '0':
                 print("\n👋 Goodbye!")
                 break
             
-            if strategy_choice != '1':
-                print("❌ Please enter 1 or 0")
+            if strategy_choice not in ['1', '2']:
+                print("❌ Please enter 1, 2, or 0")
                 continue
             
-            # Option 1: 2-Cycle 3-Step Martingale (formerly 3d)
-            print("\n✅ Selected: Option 1 - 2-Cycle 3-Step Martingale")
+            if strategy_choice == '1':
+                # Option 1: 2-Cycle 3-Step Martingale
+                print("\n✅ Selected: Option 1 - 2-Cycle 3-Step Martingale")
+                use_strategy = '2cycle_3step'
+            elif strategy_choice == '2':
+                # Option 2: 3-Cycle 2-Step Martingale
+                print("\n✅ Selected: Option 2 - 3-Cycle 2-Step Martingale")
+                use_strategy = '3cycle_2step'
             use_date_specific = False
             use_option2 = False
             use_option3 = False
@@ -5208,14 +5740,14 @@ async def main():
             # Get channel selection
             print("1. Channel Selection:")
             print("   Available channels:")
-            print("   1) James Martin Free Channel (5:00 trades)")
+            print("   1) PO Advance Bot (1:00 trades)")
             
             while True:
                 try:
                     channel_choice = input("   Select channel (1): ").strip()
                     if channel_choice == '1':
-                        active_channel = "james_martin_free"
-                        channel_display = "James Martin Free Channel (5:00 trades)"
+                        active_channel = "po_advance_bot"
+                        channel_display = "PO Advance Bot (1:00 trades)"
                         break
                     else:
                         print("   ❌ Please enter 1")
@@ -5308,10 +5840,10 @@ async def main():
             print(f"\n⏰ TIMING EXAMPLE ({channel_display}):")
             example_signal = "00:38:00"
             
-            if active_channel == "james_martin_free":
-                duration_text = "5:00 duration"
+            if active_channel == "po_advance_bot":
+                duration_text = "1:00 duration"
             else:
-                duration_text = "5:00 duration"
+                duration_text = "1:00 duration"
             
             print(f"   Signal Time: {example_signal}:000 (exact second)")
             print(f"   Execute: Within 0-10ms of {example_signal}:000")
@@ -5327,17 +5859,38 @@ async def main():
             c2s2 = c2s1 * multiplier
             c2s3 = c2s2 * multiplier
             
-            print(f"\n📊 STRATEGY PREVIEW (2-Cycle 3-Step Cross-Asset Martingale - {channel_display}):")
-            print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f} → Step 3 ${c1s3:.2f}")
-            print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f} → Step 3 ${c2s3:.2f}")
-            print(f"   Special Logic: Step 4 (C2S1) = Sum of first 3 steps (${c2s1:.2f})")
-            print(f"   Trade Duration: {duration_text}")
-            print(f"\n🔄 Cross-Asset Cycle Logic:")
-            print(f"   • WIN at any step → All assets reset to C1S1")
-            print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
-            print(f"   • LOSS at Step 2 → Move to Step 3 (same asset)")
-            print(f"   • LOSS at Step 3 → NEXT asset starts at next cycle")
-            print(f"   • Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
+            # Show strategy preview based on selected strategy
+            if use_strategy == '2cycle_3step':
+                print(f"\n📊 STRATEGY PREVIEW (2-Cycle 3-Step Cross-Asset Martingale - {channel_display}):")
+                print(f"   Cycle 1: Step 1 ${c1s1:.2f} → Step 2 ${c1s2:.2f} → Step 3 ${c1s3:.2f}")
+                print(f"   Cycle 2: Step 1 ${c2s1:.2f} → Step 2 ${c2s2:.2f} → Step 3 ${c2s3:.2f}")
+                print(f"   Special Logic: Step 4 (C2S1) = Sum of first 3 steps (${c2s1:.2f})")
+                print(f"   Trade Duration: {duration_text}")
+                print(f"\n🔄 Cross-Asset Cycle Logic:")
+                print(f"   • WIN at any step → All assets reset to C1S1")
+                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
+                print(f"   • LOSS at Step 2 → Move to Step 3 (same asset)")
+                print(f"   • LOSS at Step 3 → NEXT asset starts at next cycle")
+                print(f"   • Example: EURJPY loses C1S3 → GBPUSD starts at C2S1")
+            elif use_strategy == '3cycle_2step':
+                # Calculate 3-cycle 2-step amounts
+                c3_c1s1 = base_amount
+                c3_c1s2 = base_amount * multiplier
+                c3_c2s1 = base_amount * (multiplier ** 2)
+                c3_c2s2 = base_amount * (multiplier ** 3)
+                c3_c3s1 = base_amount * (multiplier ** 4)
+                c3_c3s2 = base_amount * (multiplier ** 5)
+                
+                print(f"\n📊 STRATEGY PREVIEW (3-Cycle 2-Step Cross-Asset Martingale - {channel_display}):")
+                print(f"   Cycle 1: Step 1 ${c3_c1s1:.2f} → Step 2 ${c3_c1s2:.2f}")
+                print(f"   Cycle 2: Step 1 ${c3_c2s1:.2f} → Step 2 ${c3_c2s2:.2f}")
+                print(f"   Cycle 3: Step 1 ${c3_c3s1:.2f} → Step 2 ${c3_c3s2:.2f}")
+                print(f"   Trade Duration: {duration_text}")
+                print(f"\n🔄 Cross-Asset Cycle Logic:")
+                print(f"   • WIN at any step → All assets reset to C1S1")
+                print(f"   • LOSS at Step 1 → Move to Step 2 (same asset)")
+                print(f"   • LOSS at Step 2 → NEXT asset starts at next cycle")
+                print(f"   • Example: EURJPY loses C1S2 → GBPUSD starts at C2S1")
             
             # Show risk management summary
             if stop_loss is not None or take_profit is not None:
@@ -5363,8 +5916,11 @@ async def main():
                 continue
             
             try:
-                # Start trading with Option 1: 2-Cycle 3-Step Martingale (formerly 3d)
-                await trader.start_2cycle_3step_trading(base_amount, multiplier, is_demo)
+                # Start trading based on selected strategy
+                if use_strategy == '2cycle_3step':
+                    await trader.start_2cycle_3step_trading(base_amount, multiplier, is_demo)
+                elif use_strategy == '3cycle_2step':
+                    await trader.start_3cycle_2step_trading(base_amount, multiplier, is_demo)
             finally:
                 # Disconnect
                 if trader.client:
